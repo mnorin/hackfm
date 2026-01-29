@@ -509,6 +509,16 @@ __ARCHIVELIST__.find_and_select(){
             elif [ $i -ge $((scroll + max_visible)) ]; then
                 scroll=$((i - max_visible + 1))
             fi
+            
+            # Clamp scroll to prevent empty rows at bottom
+            local max_scroll=$((count - max_visible))
+            if [ $max_scroll -lt 0 ]; then
+                max_scroll=0
+            fi
+            if [ $scroll -gt $max_scroll ]; then
+                scroll=$max_scroll
+            fi
+            
             __ARCHIVELIST__.scroll = $scroll
             return 0
         fi
