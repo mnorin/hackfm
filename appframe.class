@@ -1,0 +1,245 @@
+#!/bin/bash
+# appframe.class - MC-style application frame using ba.sh
+# Provides: title bar, main content area (unfilled), function key bar, screen management
+
+# Load dependencies
+. "$HACKFM_DIR/fkeybar.h"
+
+__APPFRAME___properties=()
+
+__APPFRAME__.property(){
+    # Property indices
+    local title=0
+    local show_cursor=1
+    local main_start_row=2
+    local main_end_row=3
+    local initialized=4
+    local rows=5
+    local cols=6
+    local fkeybar_created=7
+    
+    if [ "$2" = "=" ]; then
+        __APPFRAME___properties[$1]="$3"
+    else
+        echo "${__APPFRAME___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__APPFRAME__.title(){
+    if [ "$1" = "=" ]; then
+        __APPFRAME__.property title = "$2"
+    else
+        __APPFRAME__.property title
+    fi
+}
+
+__APPFRAME__.show_cursor(){
+    if [ "$1" = "=" ]; then
+        __APPFRAME__.property show_cursor = "$2"
+    else
+        __APPFRAME__.property show_cursor
+    fi
+}
+
+__APPFRAME__.main_start_row(){
+    if [ "$1" = "=" ]; then
+        __APPFRAME__.property main_start_row = "$2"
+    else
+        __APPFRAME__.property main_start_row
+    fi
+}
+
+__APPFRAME__.main_end_row(){
+    if [ "$1" = "=" ]; then
+        __APPFRAME__.property main_end_row = "$2"
+    else
+        __APPFRAME__.property main_end_row
+    fi
+}
+
+__APPFRAME__.initialized(){
+    if [ "$1" = "=" ]; then
+        __APPFRAME__.property initialized = "$2"
+    else
+        __APPFRAME__.property initialized
+    fi
+}
+
+__APPFRAME__.rows(){
+    if [ "$1" = "=" ]; then
+        __APPFRAME__.property rows = "$2"
+    else
+        local val=$(__APPFRAME__.property rows)
+        echo "${val:-24}"
+    fi
+}
+
+__APPFRAME__.cols(){
+    if [ "$1" = "=" ]; then
+        __APPFRAME__.property cols = "$2"
+    else
+        local val=$(__APPFRAME__.property cols)
+        echo "${val:-80}"
+    fi
+}
+
+__APPFRAME__.fkeybar_created(){
+    if [ "$1" = "=" ]; then
+        __APPFRAME__.property fkeybar_created = "$2"
+    else
+        local val=$(__APPFRAME__.property fkeybar_created)
+        echo "${val:-0}"
+    fi
+}
+
+# Terminal dimensions (set by setup)
+# NOTE: Removed globals - now using properties above
+
+# Setup - initialize alternate screen and dimensions
+__APPFRAME__.setup(){
+    local show_cursor=$(__APPFRAME__.show_cursor)
+    
+    # Switch to alternate screen
+    tui.screen.alt
+    
+    # Show or hide cursor based on preference
+    if [ "${show_cursor:-0}" = "1" ]; then
+        tui.cursor.show
+    else
+        tui.cursor.hide
+    fi
+    
+    # Get terminal size
+    local size=$(tui.screen.size)
+    local rows=${size% *}
+    local cols=${size#* }
+    __APPFRAME__.rows = $rows
+    __APPFRAME__.cols = $cols
+    
+    # Set main area bounds (row 2 to second-to-last row)
+    __APPFRAME__.main_start_row = 2
+    __APPFRAME__.main_end_row = $((rows - 1))
+    
+    # Mark as initialized
+    __APPFRAME__.initialized = 1
+    
+    # Disable flow control for editors
+    stty -ixon 2>/dev/null
+}
+
+# Cleanup - restore terminal state
+__APPFRAME__.cleanup(){
+    # Clear screen
+    tui.screen.clear
+    
+    # Restore cursor
+    tui.cursor.show
+    
+    # Return to main screen
+    tui.screen.main
+    
+    # Re-enable flow control
+    stty ixon 2>/dev/null
+}
+
+# Draw title bar (cyan bar at top)
+__APPFRAME__.draw_title(){
+    local title="$(__APPFRAME__.title)"
+    local cols=$(__APPFRAME__.cols)
+    
+    tui.cursor.move 1 1
+    tui.color.black
+    tui.color.bg_cyan
+    printf " %-$((cols - 2))s " "$title"
+    tui.color.reset
+}
+
+# Fill main area with blue background (optional - for viewer/editor style)
+__APPFRAME__.fill_main_blue(){
+    local start=$(__APPFRAME__.main_start_row)
+    local end=$(__APPFRAME__.main_end_row)
+    local cols=$(__APPFRAME__.cols)
+    
+    tui.color.bg_blue
+    for ((r=start; r<=end; r++)); do
+        tui.cursor.move $r 1
+        printf "%${cols}s" ""
+    done
+    tui.color.reset
+}
+
+# Clear main area (black background - for panels)
+__APPFRAME__.clear_main(){
+    local start=$(__APPFRAME__.main_start_row)
+    local end=$(__APPFRAME__.main_end_row)
+    local cols=$(__APPFRAME__.cols)
+    
+    for ((r=start; r<=end; r++)); do
+        tui.cursor.move $r 1
+        printf "%${cols}s" ""
+    done
+}
+
+# Draw function key bar at bottom
+# Usage: appframe.draw_fkeys "Help" "" "View" "Edit" ...
+__APPFRAME__.draw_fkeys(){
+    # Create fkeybar instance if not already created
+    local fkeybar_created=$(__APPFRAME__.fkeybar_created)
+    if [ $fkeybar_created -eq 0 ]; then
+        fkeybar __APPFRAME___fkeybar
+        __APPFRAME__.fkeybar_created = 1
+    fi
+    
+    # Set position and width
+    local rows=$(__APPFRAME__.rows)
+    local cols=$(__APPFRAME__.cols)
+    __APPFRAME___fkeybar.row = $rows
+    __APPFRAME___fkeybar.width = $cols
+    
+    # Render with provided labels (F1-F10)
+    __APPFRAME___fkeybar.render "$@"
+}
+
+# Get main area dimensions
+# Returns: "start_row end_row width"
+__APPFRAME__.main_dimensions(){
+    local start=$(__APPFRAME__.main_start_row)
+    local end=$(__APPFRAME__.main_end_row)
+    local cols=$(__APPFRAME__.cols)
+    echo "$start $end $cols"
+}
+
+# Get main area height
+__APPFRAME__.main_height(){
+    local start=$(__APPFRAME__.main_start_row)
+    local end=$(__APPFRAME__.main_end_row)
+    echo $((end - start + 1))
+}
+
+# Get main area width
+__APPFRAME__.main_width(){
+    __APPFRAME__.cols
+}
+
+# Draw just the frame (title + fkeys, NO main area fill)
+# Usage: appframe.draw_frame "F1label" "F2label" ... "F10label"
+__APPFRAME__.draw_frame(){
+    tui.screen.clear
+    __APPFRAME__.draw_title
+    __APPFRAME__.draw_fkeys "$@"
+}
+
+# Draw frame with blue main area (for viewer/editor)
+__APPFRAME__.draw_frame_blue(){
+    tui.screen.clear
+    __APPFRAME__.draw_title
+    __APPFRAME__.fill_main_blue
+    __APPFRAME__.draw_fkeys "$@"
+}
+
+# Redraw just title and fkeys (not main area)
+__APPFRAME__.refresh_frame(){
+    __APPFRAME__.draw_title
+    __APPFRAME__.draw_fkeys "$@"
+}

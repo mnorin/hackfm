@@ -1,0 +1,13 @@
+examples/tui/
+├── cursor.class     # Primitives
+├── screen.class     # Primitives
+├── color.class      # Primitives
+├── box.class        # Depends on: cursor
+├── text.class       # Depends on: cursor, color
+├── mouse.class      # No dependencies
+├── input.class      # No dependencies
+├── menu.class       # Depends on: cursor, box, color, input
+├── button.class     # Depends on: cursor, box, color
+├── tui.h            # Loads all
+└── README.md
+

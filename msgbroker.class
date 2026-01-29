@@ -1,0 +1,99 @@
+#!/bin/bash
+# msgbroker.class - Message broker for pub/sub event system
+
+# Arrays for storing subscribers
+# Format: topic -> space-separated list of handler function names
+declare -Ag __MSGBROKER___subscribers=()
+
+# Subscribe to a topic
+# Args: topic handler_function
+__MSGBROKER__.subscribe(){
+    local topic="$1"
+    local handler="$2"
+    
+    if [ -z "$topic" ] || [ -z "$handler" ]; then
+        echo "Error: subscribe requires topic and handler" >&2
+        return 1
+    fi
+    
+    # Add handler to topic's subscriber list
+    if [ -z "${__MSGBROKER___subscribers[$topic]}" ]; then
+        __MSGBROKER___subscribers[$topic]="$handler"
+    else
+        # Check if handler already subscribed
+        if [[ " ${__MSGBROKER___subscribers[$topic]} " =~ " $handler " ]]; then
+            return 0  # Already subscribed
+        fi
+        __MSGBROKER___subscribers[$topic]+=" $handler"
+    fi
+}
+
+# Publish an event to a topic
+# Args: topic [data...]
+__MSGBROKER__.publish(){
+    local topic="$1"
+    shift
+    local data="$@"
+    
+    if [ -z "$topic" ]; then
+        echo "Error: publish requires topic" >&2
+        return 1
+    fi
+    
+    # Get subscribers for this topic
+    local handlers="${__MSGBROKER___subscribers[$topic]}"
+    
+    if [ -z "$handlers" ]; then
+        return 0  # No subscribers, that's okay
+    fi
+    
+    # Call each handler
+    for handler in $handlers; do
+        if declare -F "$handler" &>/dev/null; then
+            "$handler" "$data"
+        else
+            echo "Warning: handler '$handler' for topic '$topic' not found" >&2
+        fi
+    done
+}
+
+# Unsubscribe from a topic
+# Args: topic handler_function
+__MSGBROKER__.unsubscribe(){
+    local topic="$1"
+    local handler="$2"
+    
+    if [ -z "$topic" ] || [ -z "$handler" ]; then
+        echo "Error: unsubscribe requires topic and handler" >&2
+        return 1
+    fi
+    
+    # Remove handler from subscriber list
+    local handlers="${__MSGBROKER___subscribers[$topic]}"
+    if [ -n "$handlers" ]; then
+        handlers=" $handlers "
+        handlers="${handlers// $handler / }"
+        handlers="${handlers# }"
+        handlers="${handlers% }"
+        __MSGBROKER___subscribers[$topic]="$handlers"
+    fi
+}
+
+# List all topics
+__MSGBROKER__.topics(){
+    for topic in "${!__MSGBROKER___subscribers[@]}"; do
+        echo "$topic"
+    done
+}
+
+# List subscribers for a topic
+# Args: topic
+__MSGBROKER__.subscribers(){
+    local topic="$1"
+    echo "${__MSGBROKER___subscribers[$topic]}"
+}
+
+# Clear all subscriptions (useful for cleanup/testing)
+__MSGBROKER__.clear(){
+    __MSGBROKER___subscribers=()
+}

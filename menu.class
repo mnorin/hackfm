@@ -1,0 +1,346 @@
+#!/bin/bash
+# menu.class - Clean menu system with hotkeys
+
+__MENU___properties=()
+
+__MENU__.property(){
+    # Property indices
+    local selected_handler=0
+    local background_redraw=1
+    
+    if [ "$2" = "=" ]; then
+        __MENU___properties[$1]="$3"
+    else
+        echo "${__MENU___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__MENU__.selected(){
+    if [ "$1" = "=" ]; then
+        __MENU__.property selected_handler = "$2"
+    else
+        __MENU__.property selected_handler
+    fi
+}
+
+__MENU__.background_redraw(){
+    if [ "$1" = "=" ]; then
+        __MENU__.property background_redraw = "$2"
+    else
+        __MENU__.property background_redraw
+    fi
+}
+
+# Menu structure storage
+declare -ag __MENU___menu_names=()        # ["Left", "File", "Command", ...]
+declare -Ag __MENU___menu_items=()        # menu_name -> newline-separated "text|hotkey|handler"
+declare -Ag __MENU___menu_positions=()    # menu_name -> column position
+
+# Add a menu item to the menu bar
+__MENU__.add_item(){
+    local name="$1"
+    __MENU___menu_names+=("$name")
+    __MENU___menu_items[$name]=""
+}
+
+# Add a subitem to a menu
+# Args: menu_name text hotkey handler
+__MENU__.add_subitem(){
+    local menu_name="$1"
+    local text="$2"
+    local hotkey="$3"
+    local handler="$4"
+    
+    if [ -z "${__MENU___menu_items[$menu_name]+x}" ]; then
+        echo "Error: Menu '$menu_name' does not exist" >&2
+        return 1
+    fi
+    
+    local item="$text|$hotkey|$handler"
+    
+    if [ -z "${__MENU___menu_items[$menu_name]}" ]; then
+        __MENU___menu_items[$menu_name]="$item"
+    else
+        __MENU___menu_items[$menu_name]+=$'\n'"$item"
+    fi
+}
+
+# Clear all menus
+__MENU__.clear(){
+    __MENU___menu_names=()
+    __MENU___menu_items=()
+    __MENU___menu_positions=()
+    __MENU__.selected = ""
+}
+
+# Draw the menu bar
+# Args: selected_menu_index
+__MENU__.draw_bar(){
+    local selected_menu=${1:-0}
+    
+    tui.cursor.move 1 1
+    tui.color.bg_cyan
+    tui.color.black
+    
+    local cols=$(tput cols)
+    local pos=2
+    
+    # Draw each menu name and calculate positions
+    local idx=0
+    for menu_name in "${__MENU___menu_names[@]}"; do
+        __MENU___menu_positions[$menu_name]=$pos
+        
+        # Highlight selected menu
+        if [ $idx -eq $selected_menu ]; then
+            tui.color.bg_black
+            tui.color.cyan
+        else
+            tui.color.bg_cyan
+            tui.color.black
+        fi
+        
+        printf " %s " "$menu_name"
+        pos=$((pos + ${#menu_name} + 2))
+        idx=$((idx + 1))
+    done
+    
+    # Fill rest of line
+    tui.color.bg_cyan
+    tui.color.black
+    local remaining=$((cols - pos + 1))
+    if [ $remaining -gt 0 ]; then
+        printf "%${remaining}s" ""
+    fi
+    
+    tui.color.reset
+}
+
+# Draw a dropdown menu
+# Args: menu_name selected_index
+__MENU__.draw_dropdown(){
+    local menu_name="$1"
+    local selected_idx="$2"
+    
+    local items="${__MENU___menu_items[$menu_name]}"
+    if [ -z "$items" ]; then
+        return
+    fi
+    
+    # Parse items into arrays
+    local -a texts=()
+    local -a hotkeys=()
+    local -a handlers=()
+    
+    while IFS='|' read -r text hotkey handler; do
+        texts+=("$text")
+        hotkeys+=("$hotkey")
+        handlers+=("$handler")
+    done <<< "$items"
+    
+    local item_count=${#texts[@]}
+    
+    # Calculate dropdown dimensions
+    local max_text_width=0
+    local max_hotkey_width=0
+    
+    for ((i=0; i<item_count; i++)); do
+        [ ${#texts[$i]} -gt $max_text_width ] && max_text_width=${#texts[$i]}
+        [ ${#hotkeys[$i]} -gt $max_hotkey_width ] && max_hotkey_width=${#hotkeys[$i]}
+    done
+    
+    # Width: │ + space + text + padding + 2 spaces + hotkey + space + │
+    # = 2 (borders) + 1 (left space) + max_text_width + 2 (gap) + max_hotkey_width + 1 (right space)
+    local dropdown_width=$((2 + 1 + max_text_width + 2 + max_hotkey_width + 1))
+    
+    # Position: under the menu name
+    local col=${__MENU___menu_positions[$menu_name]}
+    local row=2
+    
+    # Use dialog colors (white background, black text)
+    tui.color.bg_white
+    tui.color.black
+    
+    # Draw dropdown box
+    tui.cursor.move $row $col
+    printf "┌%s┐" "$(printf '─%.0s' $(seq 1 $((dropdown_width - 2))))"
+    
+    # Draw items
+    for ((i=0; i<item_count; i++)); do
+        row=$((row + 1))
+        tui.cursor.move $row $col
+        
+        # Draw border
+        tui.color.bg_white
+        tui.color.black
+        printf "│"
+        
+        # Draw item content
+        if [ $i -eq $selected_idx ]; then
+            # Selected item: cyan background (only the content, not borders)
+            tui.color.bg_cyan
+            tui.color.black
+        else
+            # Normal item: white background
+            tui.color.bg_white
+            tui.color.black
+        fi
+        
+        # Format content: space + Text + padding + 2 spaces + hotkey + space
+        local text_padding=$((max_text_width - ${#texts[$i]}))
+        local hotkey_padding=$((max_hotkey_width - ${#hotkeys[$i]}))
+        
+        printf " %s%*s  %*s%s " \
+            "${texts[$i]}" "$text_padding" "" \
+            "$hotkey_padding" "" "${hotkeys[$i]}"
+        
+        # Draw right border
+        tui.color.bg_white
+        tui.color.black
+        printf "│"
+    done
+    
+    # Draw bottom border
+    row=$((row + 1))
+    tui.cursor.move $row $col
+    tui.color.bg_white
+    tui.color.black
+    printf "└%s┘" "$(printf '─%.0s' $(seq 1 $((dropdown_width - 2))))"
+    
+    tui.color.reset
+}
+
+# Show menu and handle interaction
+# Returns: handler name (via .selected property)
+__MENU__.show(){
+    local current_menu=0
+    local current_item=0
+    local menu_count=${#__MENU___menu_names[@]}
+    local dropdown_open=0  # Start with dropdown CLOSED
+    
+    # Clear selected handler
+    __MENU__.selected = ""
+    
+    # Draw menu bar with first menu selected
+    __MENU__.draw_bar $current_menu
+    
+    # Input loop
+    while true; do
+        local key
+        key=$(tui.input.key 2>&1) || continue
+        
+        case "$key" in
+            LEFT)
+                if [ $dropdown_open -eq 0 ]; then
+                    # Navigate menu bar
+                    if [ $current_menu -gt 0 ]; then
+                        current_menu=$((current_menu - 1))
+                        __MENU__.draw_bar $current_menu
+                    fi
+                else
+                    # Move to previous menu with dropdown
+                    if [ $current_menu -gt 0 ]; then
+                        current_menu=$((current_menu - 1))
+                        current_item=0
+                        
+                        # Redraw
+                        local redraw_fn=$(__MENU__.background_redraw)
+                        [ -n "$redraw_fn" ] && $redraw_fn
+                        __MENU__.draw_bar $current_menu
+                        local menu_name="${__MENU___menu_names[$current_menu]}"
+                        __MENU__.draw_dropdown "$menu_name" $current_item
+                    fi
+                fi
+                ;;
+            RIGHT)
+                if [ $dropdown_open -eq 0 ]; then
+                    # Navigate menu bar
+                    if [ $current_menu -lt $((menu_count - 1)) ]; then
+                        current_menu=$((current_menu + 1))
+                        __MENU__.draw_bar $current_menu
+                    fi
+                else
+                    # Move to next menu with dropdown
+                    if [ $current_menu -lt $((menu_count - 1)) ]; then
+                        current_menu=$((current_menu + 1))
+                        current_item=0
+                        
+                        # Redraw
+                        local redraw_fn=$(__MENU__.background_redraw)
+                        [ -n "$redraw_fn" ] && $redraw_fn
+                        __MENU__.draw_bar $current_menu
+                        local menu_name="${__MENU___menu_names[$current_menu]}"
+                        __MENU__.draw_dropdown "$menu_name" $current_item
+                    fi
+                fi
+                ;;
+            UP)
+                if [ $dropdown_open -eq 1 ]; then
+                    # Move up in dropdown
+                    local menu_name="${__MENU___menu_names[$current_menu]}"
+                    local items="${__MENU___menu_items[$menu_name]}"
+                    local item_count=$(echo "$items" | wc -l)
+                    
+                    if [ $current_item -gt 0 ]; then
+                        current_item=$((current_item - 1))
+                        __MENU__.draw_dropdown "$menu_name" $current_item
+                    fi
+                fi
+                ;;
+            DOWN)
+                if [ $dropdown_open -eq 1 ]; then
+                    # Move down in dropdown
+                    local menu_name="${__MENU___menu_names[$current_menu]}"
+                    local items="${__MENU___menu_items[$menu_name]}"
+                    local item_count=$(echo "$items" | wc -l)
+                    
+                    if [ $current_item -lt $((item_count - 1)) ]; then
+                        current_item=$((current_item + 1))
+                        __MENU__.draw_dropdown "$menu_name" $current_item
+                    fi
+                fi
+                ;;
+            ENTER)
+                if [ $dropdown_open -eq 0 ]; then
+                    # Open dropdown
+                    dropdown_open=1
+                    current_item=0
+                    local menu_name="${__MENU___menu_names[$current_menu]}"
+                    __MENU__.draw_dropdown "$menu_name" $current_item
+                else
+                    # Select current item
+                    local menu_name="${__MENU___menu_names[$current_menu]}"
+                    local items="${__MENU___menu_items[$menu_name]}"
+                    
+                    # Get handler for selected item
+                    local idx=0
+                    while IFS='|' read -r text hotkey handler; do
+                        if [ $idx -eq $current_item ]; then
+                            __MENU__.selected = "$handler"
+                            return 0
+                        fi
+                        idx=$((idx + 1))
+                    done <<< "$items"
+                fi
+                ;;
+            ESC)
+                if [ $dropdown_open -eq 1 ]; then
+                    # First ESC: close dropdown, stay in menu bar
+                    dropdown_open=0
+                    local redraw_fn=$(__MENU__.background_redraw)
+                    [ -n "$redraw_fn" ] && $redraw_fn
+                    __MENU__.draw_bar $current_menu
+                else
+                    # Second ESC: close menu entirely
+                    __MENU__.selected = ""
+                    return 0
+                fi
+                ;;
+            F9)
+                # F9 always closes menu
+                __MENU__.selected = ""
+                return 0
+                ;;
+        esac
+    done
+}

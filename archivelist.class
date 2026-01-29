@@ -1,0 +1,490 @@
+#!/bin/bash
+# archivelist.class - Archive browsing using ba.sh
+
+__ARCHIVELIST___properties=()
+
+__ARCHIVELIST__.property(){
+    # Property indices
+    local archive_path=0
+    local archive_type=1
+    local internal_path=2
+    local selected=3
+    local scroll=4
+    
+    if [ "$2" = "=" ]; then
+        __ARCHIVELIST___properties[$1]="$3"
+    else
+        echo "${__ARCHIVELIST___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__ARCHIVELIST__.archive_path(){
+    if [ "$1" = "=" ]; then
+        __ARCHIVELIST__.property archive_path = "$2"
+    else
+        __ARCHIVELIST__.property archive_path
+    fi
+}
+
+__ARCHIVELIST__.archive_type(){
+    if [ "$1" = "=" ]; then
+        __ARCHIVELIST__.property archive_type = "$2"
+    else
+        __ARCHIVELIST__.property archive_type
+    fi
+}
+
+__ARCHIVELIST__.internal_path(){
+    if [ "$1" = "=" ]; then
+        __ARCHIVELIST__.property internal_path = "$2"
+    else
+        __ARCHIVELIST__.property internal_path
+    fi
+}
+
+__ARCHIVELIST__.selected(){
+    if [ "$1" = "=" ]; then
+        __ARCHIVELIST__.property selected = "$2"
+    else
+        __ARCHIVELIST__.property selected
+    fi
+}
+
+__ARCHIVELIST__.scroll(){
+    if [ "$1" = "=" ]; then
+        __ARCHIVELIST__.property scroll = "$2"
+    else
+        __ARCHIVELIST__.property scroll
+    fi
+}
+
+__ARCHIVELIST__.path(){
+    # Return display path: /path/to/archive.tar.gz//internal/path
+    local archive=$(__ARCHIVELIST__.archive_path)
+    local internal=$(__ARCHIVELIST__.internal_path)
+    
+    if [ -z "$internal" ]; then
+        echo "$archive//"
+    else
+        echo "$archive//$internal"
+    fi
+}
+
+# Arrays for archive entries
+# Full archive list loaded once
+declare -ag __ARCHIVELIST___all_entries=()  # Format: "fullpath|size"
+
+# Filtered display arrays (same as filelist)
+declare -ag __ARCHIVELIST___files=()
+declare -ag __ARCHIVELIST___types=()
+declare -ag __ARCHIVELIST___sizes=()
+declare -ag __ARCHIVELIST___times=()
+declare -ag __ARCHIVELIST___full_paths=()
+
+# Detect archive type from filename
+__ARCHIVELIST__._detect_type(){
+    local filepath="$1"
+    local basename="${filepath##*/}"
+    local lowercase="${basename,,}"
+    
+    case "$lowercase" in
+        *.tar.gz|*.tgz)   echo "tar.gz" ;;
+        *.tar.bz2|*.tbz2) echo "tar.bz2" ;;
+        *.tar.xz|*.txz)   echo "tar.xz" ;;
+        *.tar)            echo "tar" ;;
+        *.zip)            echo "zip" ;;
+        *.rar)            echo "rar" ;;
+        *.7z)             echo "7z" ;;
+        *)                echo "unknown" ;;
+    esac
+}
+
+# Load full archive contents once (called on first load only)
+__ARCHIVELIST__._load_full_archive(){
+    local archive_path=$(__ARCHIVELIST__.archive_path)
+    local archive_type=$(__ARCHIVELIST__.archive_type)
+    
+    echo "DEBUG: _load_full_archive called, archive_path=$archive_path, archive_type=$archive_type" >&2
+    
+    __ARCHIVELIST___all_entries=()
+    
+    case "$archive_type" in
+        tar|tar.gz|tar.bz2|tar.xz)
+            while IFS= read -r line; do
+                local size=$(echo "$line" | awk '{print $3}')
+                local filename=$(echo "$line" | awk '{$1=$2=$3=$4=$5=""; sub(/^[ \t]+/, ""); print}')
+                
+                local size_str=""
+                if [ "$size" -lt 1024 ]; then
+                    size_str="${size}B"
+                elif [ "$size" -lt 1048576 ]; then
+                    size_str="$((size / 1024))K"
+                else
+                    size_str="$((size / 1048576))M"
+                fi
+                
+                __ARCHIVELIST___all_entries+=("$filename|$size_str")
+            done < <(tar -tvf "$archive_path" 2>/dev/null)
+            ;;
+        zip)
+            while IFS= read -r line; do
+                local field_count=$(echo "$line" | awk '{print NF}')
+                [ "$field_count" -lt 4 ] && continue
+                
+                local size=$(echo "$line" | awk '{print $1}')
+                local filename=$(echo "$line" | awk '{$1=$2=$3=""; sub(/^[ \t]+/, ""); print}')
+                
+                local size_str=""
+                if [ "$size" -lt 1024 ]; then
+                    size_str="${size}B"
+                elif [ "$size" -lt 1048576 ]; then
+                    size_str="$((size / 1024))K"
+                else
+                    size_str="$((size / 1048576))M"
+                fi
+                
+                [ -n "$filename" ] && __ARCHIVELIST___all_entries+=("$filename|$size_str")
+            done < <(unzip -l "$archive_path" 2>/dev/null | tail -n +4 | head -n -2)
+            ;;
+        rar)
+            while IFS= read -r line; do
+                __ARCHIVELIST___all_entries+=("$line|")
+            done < <(unrar lb "$archive_path" 2>/dev/null)
+            ;;
+        7z)
+            echo "DEBUG: Entering 7z case" >&2
+            local cmd=""
+            if command -v 7z >/dev/null 2>&1; then
+                cmd="7z"
+            elif command -v 7za >/dev/null 2>&1; then
+                cmd="7za"
+            elif command -v 7zr >/dev/null 2>&1; then
+                cmd="7zr"
+            fi
+            
+            echo "DEBUG: cmd=$cmd, archive_path=$archive_path" >&2
+            
+            if [ -n "$cmd" ]; then
+                local separator_line=""
+                local filename_pos=0
+                local in_listing=0
+                local line_count=0
+                
+                while IFS= read -r line; do
+                    ((line_count++))
+                    
+                    if [ $line_count -le 25 ]; then
+                        echo "DEBUG: Line $line_count: [$line]" >&2
+                    fi
+                    
+                    # Find separator line with dashes
+                    if [[ "$line" =~ ^-{10,} ]]; then
+                        echo "DEBUG: Found separator at line $line_count" >&2
+                        if [ $in_listing -eq 0 ]; then
+                            # First separator - save it to find filename position
+                            separator_line="$line"
+                            # Find where last dash section starts
+                            local temp="${separator_line% -*}"
+                            filename_pos=${#temp}
+                            ((filename_pos++))
+                            echo "DEBUG: separator_line=[$separator_line]" >&2
+                            echo "DEBUG: temp=[$temp]" >&2
+                            echo "DEBUG: filename_pos=$filename_pos" >&2
+                            in_listing=1
+                            continue
+                        else
+                            # Second separator - end of listing
+                            echo "DEBUG: Second separator, breaking" >&2
+                            break
+                        fi
+                    fi
+                    
+                    # Skip until we're in the listing
+                    if [ $in_listing -eq 0 ]; then
+                        continue
+                    fi
+                    
+                    # Skip empty lines (can appear between separator and files)
+                    if [[ -z "$line" ]]; then
+                        echo "DEBUG: Skipping empty line" >&2
+                        continue
+                    fi
+                    
+                    # Extract filename by position
+                    local filename="${line:$filename_pos}"
+                    
+                    # Extract size (column 4) and attributes (column 3)
+                    local attr=$(echo "$line" | awk '{print $3}')
+                    local size=$(echo "$line" | awk '{print $4}')
+                    
+                    if [ $line_count -le 25 ]; then
+                        echo "DEBUG: Extracted filename=[$filename] attr=[$attr] size=[$size]" >&2
+                    fi
+                    
+                    [[ -z "$filename" ]] && continue
+                    
+                    # Check if it's a directory (D in attribute column)
+                    local is_dir=0
+                    if [[ "$attr" == D* ]]; then
+                        is_dir=1
+                    fi
+                    
+                    # For directories, append / to the filename
+                    if [ $is_dir -eq 1 ]; then
+                        filename="${filename}/"
+                    fi
+                    
+                    # Format size
+                    local size_str=""
+                    if [[ "$size" =~ ^[0-9]+$ ]]; then
+                        if [ "$size" -lt 1024 ]; then
+                            size_str="${size}B"
+                        elif [ "$size" -lt 1048576 ]; then
+                            size_str="$((size / 1024))K"
+                        else
+                            size_str="$((size / 1048576))M"
+                        fi
+                    fi
+                    
+                    __ARCHIVELIST___all_entries+=("$filename|$size_str")
+                    
+                    if [ $line_count -le 25 ]; then
+                        echo "DEBUG: Added entry: $filename|$size_str" >&2
+                    fi
+                done < <($cmd l "$archive_path" 2>/dev/null)
+                
+                echo "DEBUG: Total entries loaded: ${#__ARCHIVELIST___all_entries[@]}" >&2
+            fi
+            ;;
+    esac
+}
+
+# Filter all_entries by internal_path
+__ARCHIVELIST__._filter_by_path(){
+    local internal_path=$(__ARCHIVELIST__.internal_path)
+    local current_prefix="$internal_path"
+    [ -n "$current_prefix" ] && current_prefix="${current_prefix}/"
+    
+    local -a subdirs=()
+    local -a files=()
+    
+    for entry in "${__ARCHIVELIST___all_entries[@]}"; do
+        IFS='|' read -r entry_name entry_size <<< "$entry"
+        
+        [[ "$entry_name" != "$current_prefix"* ]] && continue
+        
+        local relative="${entry_name#$current_prefix}"
+        [ -z "$relative" ] && continue
+        
+        if [[ "$relative" == */* ]]; then
+            local subdir="${relative%%/*}"
+            
+            local already_added=0
+            for d in "${subdirs[@]}"; do
+                if [ "$d" = "$subdir" ]; then
+                    already_added=1
+                    break
+                fi
+            done
+            
+            [ $already_added -eq 0 ] && subdirs+=("$subdir")
+        else
+            files+=("$relative|$entry_name|$entry_size")
+        fi
+    done
+    
+    # Add subdirectories
+    for dir in "${subdirs[@]}"; do
+        __ARCHIVELIST___files+=("$dir")
+        __ARCHIVELIST___types+=("d")
+        __ARCHIVELIST___sizes+=("SUB-DIR")
+        __ARCHIVELIST___times+=("")
+        __ARCHIVELIST___full_paths+=("${current_prefix}${dir}")
+    done
+    
+    # Add files
+    for file_entry in "${files[@]}"; do
+        IFS='|' read -r filename fullpath filesize <<< "$file_entry"
+        __ARCHIVELIST___files+=("$filename")
+        __ARCHIVELIST___types+=("f")
+        __ARCHIVELIST___sizes+=("$filesize")
+        __ARCHIVELIST___times+=("")
+        __ARCHIVELIST___full_paths+=("$fullpath")
+    done
+}
+
+# Load (or filter) archive contents at current internal path
+__ARCHIVELIST__.load(){
+    echo "DEBUG: load() called, all_entries count=${#__ARCHIVELIST___all_entries[@]}" >&2
+    
+    # Clear display arrays
+    __ARCHIVELIST___files=()
+    __ARCHIVELIST___types=()
+    __ARCHIVELIST___sizes=()
+    __ARCHIVELIST___times=()
+    __ARCHIVELIST___full_paths=()
+    __ARCHIVELIST__.selected = 0
+    __ARCHIVELIST__.scroll = 0
+    
+    # Load full archive if not already loaded
+    if [ ${#__ARCHIVELIST___all_entries[@]} -eq 0 ]; then
+        echo "DEBUG: Calling _load_full_archive" >&2
+        __ARCHIVELIST__._load_full_archive
+    fi
+    
+    # Always add ".."
+    __ARCHIVELIST___files+=("..")
+    __ARCHIVELIST___types+=("d")
+    __ARCHIVELIST___sizes+=("UP--DIR")
+    __ARCHIVELIST___times+=("")
+    __ARCHIVELIST___full_paths+=("")
+    
+    # Filter for current path
+    __ARCHIVELIST__._filter_by_path
+}
+
+# Get entry at index (same format as filelist)
+__ARCHIVELIST__.get(){
+    local index="$1"
+    echo "${__ARCHIVELIST___files[$index]}|${__ARCHIVELIST___types[$index]}|${__ARCHIVELIST___sizes[$index]}|${__ARCHIVELIST___times[$index]}|0|0|"
+}
+
+# Get count
+__ARCHIVELIST__.count(){
+    echo ${#__ARCHIVELIST___files[@]}
+}
+
+# Navigate (UP/DOWN/etc)
+__ARCHIVELIST__.navigate(){
+    local direction="$1"
+    local max_visible="${2:-20}"
+    
+    local selected=$(__ARCHIVELIST__.selected)
+    local count=${#__ARCHIVELIST___files[@]}
+    
+    case "$direction" in
+        UP)
+            if [ $selected -gt 0 ]; then
+                __ARCHIVELIST__.selected = $((selected - 1))
+                
+                local scroll=$(__ARCHIVELIST__.scroll)
+                if [ $selected -lt $scroll ]; then
+                    __ARCHIVELIST__.scroll = $selected
+                fi
+            fi
+            ;;
+        DOWN)
+            if [ $selected -lt $((count - 1)) ]; then
+                __ARCHIVELIST__.selected = $((selected + 1))
+                
+                local scroll=$(__ARCHIVELIST__.scroll)
+                if [ $selected -ge $((scroll + max_visible)) ]; then
+                    __ARCHIVELIST__.scroll = $((scroll + 1))
+                fi
+            fi
+            ;;
+        PAGEUP)
+            local new_selected=$((selected - max_visible))
+            [ $new_selected -lt 0 ] && new_selected=0
+            __ARCHIVELIST__.selected = $new_selected
+            
+            local scroll=$(__ARCHIVELIST__.scroll)
+            if [ $new_selected -lt $scroll ]; then
+                __ARCHIVELIST__.scroll = $new_selected
+            fi
+            ;;
+        PAGEDOWN)
+            local new_selected=$((selected + max_visible))
+            [ $new_selected -ge $count ] && new_selected=$((count - 1))
+            __ARCHIVELIST__.selected = $new_selected
+            
+            local scroll=$(__ARCHIVELIST__.scroll)
+            if [ $new_selected -ge $((scroll + max_visible)) ]; then
+                __ARCHIVELIST__.scroll = $((new_selected - max_visible + 1))
+            fi
+            ;;
+        HOME)
+            __ARCHIVELIST__.selected = 0
+            __ARCHIVELIST__.scroll = 0
+            ;;
+        END)
+            __ARCHIVELIST__.selected = $((count - 1))
+            local scroll=$((count - max_visible))
+            [ $scroll -lt 0 ] && scroll=0
+            __ARCHIVELIST__.scroll = $scroll
+            ;;
+    esac
+}
+
+# Check if special entry
+__ARCHIVELIST__.is_special(){
+    local filename="$1"
+    [[ "$filename" == ".." || "$filename" == "<empty>" ]]
+}
+
+# Enter directory
+__ARCHIVELIST__.enter(){
+    local selected=$(__ARCHIVELIST__.selected)
+    local filename="${__ARCHIVELIST___files[$selected]}"
+    local filetype="${__ARCHIVELIST___types[$selected]}"
+    
+    if [ "$filename" = ".." ]; then
+        # Go up one level
+        local internal=$(__ARCHIVELIST__.internal_path)
+        
+        local leaving_dir="${internal##*/}"
+        local parent="${internal%/*}"
+        
+        if [ "$parent" = "$internal" ]; then
+            parent=""
+        fi
+        
+        __ARCHIVELIST__.internal_path = "$parent"
+        __ARCHIVELIST__.load
+        
+        # Find and select the directory we just left
+        if [ -n "$leaving_dir" ]; then
+            local count=${#__ARCHIVELIST___files[@]}
+            for ((i=0; i<count; i++)); do
+                if [ "${__ARCHIVELIST___files[$i]}" = "$leaving_dir" ]; then
+                    __ARCHIVELIST__.selected = $i
+                    break
+                fi
+            done
+        fi
+    elif [ "$filetype" = "d" ]; then
+        # Enter subdirectory
+        local internal=$(__ARCHIVELIST__.internal_path)
+        
+        if [ -z "$internal" ]; then
+            __ARCHIVELIST__.internal_path = "$filename"
+        else
+            __ARCHIVELIST__.internal_path = "$internal/$filename"
+        fi
+        
+        __ARCHIVELIST__.load
+    fi
+}
+
+# Get selected item info
+__ARCHIVELIST__.get_selected_item(){
+    local selected=$(__ARCHIVELIST__.selected)
+    local filename="${__ARCHIVELIST___files[$selected]}"
+    local filetype="${__ARCHIVELIST___types[$selected]}"
+    local path="${__ARCHIVELIST___full_paths[$selected]}"
+    
+    echo "$filename|$filetype|$path"
+}
+
+# Stub methods for filelist API compatibility
+__ARCHIVELIST__.count_selected(){ echo 0; }
+__ARCHIVELIST__.toggle_selection(){ :; }
+__ARCHIVELIST__.selection_info(){ echo "0|0"; }
+__ARCHIVELIST__.find_and_select(){ :; }
+__ARCHIVELIST__.render_row(){ echo ""; }
+__ARCHIVELIST__.sort_order(){ echo "name_asc"; }
+__ARCHIVELIST__.marked_size(){ echo 0; }
+__ARCHIVELIST__.marked_count(){ echo 0; }
+__ARCHIVELIST__.get_selected(){ __ARCHIVELIST__.get_selected_item; }
+

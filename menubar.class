@@ -1,0 +1,57 @@
+#!/bin/bash
+# menubar.class - Menu bar using ba.sh
+
+__MENUBAR___properties=()
+
+__MENUBAR__.property(){
+    # Property indices
+    local row=0
+    local width=1
+    local text=2
+    
+    if [ "$2" = "=" ]; then
+        __MENUBAR___properties[$1]="$3"
+    else
+        echo "${__MENUBAR___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__MENUBAR__.row(){
+    if [ "$1" = "=" ]; then
+        __MENUBAR__.property row = "$2"
+    else
+        __MENUBAR__.property row
+    fi
+}
+
+__MENUBAR__.width(){
+    if [ "$1" = "=" ]; then
+        __MENUBAR__.property width = "$2"
+    else
+        __MENUBAR__.property width
+    fi
+}
+
+__MENUBAR__.text(){
+    if [ "$1" = "=" ]; then
+        __MENUBAR__.property text = "$2"
+    else
+        __MENUBAR__.property text
+    fi
+}
+
+# Render method
+__MENUBAR__.render(){
+    local row=$(__MENUBAR__.row)
+    local width=$(__MENUBAR__.width)
+    local text="$(__MENUBAR__.text)"
+    
+    tui.cursor.move $row 1
+    tui.color.black
+    tui.color.bg_cyan
+    
+    printf " %-$((width - 2))s " "$text"
+    
+    tui.color.reset
+}

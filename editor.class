@@ -1,0 +1,1008 @@
+#!/bin/bash
+# editor.class - Text editor using ba.sh
+
+# Load dependencies
+. "$HACKFM_DIR/appframe.h"
+
+__EDITOR___properties=()
+
+__EDITOR__.property(){
+    # Property indices
+    local filepath=0
+    local modified=1
+    local cursor_row=2
+    local cursor_col=3
+    local viewport_top=4
+    local viewport_left=5
+    local selection_active=6
+    local selection_start_row=7
+    local selection_start_col=8
+    local selection_end_row=9
+    local selection_end_col=10
+    local selection_marking=11  # 1 = actively marking (cursor updates end), 0 = marked (frozen)
+    local appframe_created=12
+    
+    if [ "$2" = "=" ]; then
+        __EDITOR___properties[$1]="$3"
+    else
+        echo "${__EDITOR___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__EDITOR__.filepath(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property filepath = "$2"
+    else
+        __EDITOR__.property filepath
+    fi
+}
+
+__EDITOR__.modified(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property modified = "$2"
+    else
+        __EDITOR__.property modified
+    fi
+}
+
+__EDITOR__.cursor_row(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property cursor_row = "$2"
+    else
+        __EDITOR__.property cursor_row
+    fi
+}
+
+__EDITOR__.cursor_col(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property cursor_col = "$2"
+    else
+        __EDITOR__.property cursor_col
+    fi
+}
+
+__EDITOR__.viewport_top(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property viewport_top = "$2"
+    else
+        __EDITOR__.property viewport_top
+    fi
+}
+
+__EDITOR__.viewport_left(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property viewport_left = "$2"
+    else
+        __EDITOR__.property viewport_left
+    fi
+}
+
+__EDITOR__.selection_active(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property selection_active = "$2"
+    else
+        __EDITOR__.property selection_active
+    fi
+}
+
+__EDITOR__.selection_start_row(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property selection_start_row = "$2"
+    else
+        __EDITOR__.property selection_start_row
+    fi
+}
+
+__EDITOR__.selection_start_col(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property selection_start_col = "$2"
+    else
+        __EDITOR__.property selection_start_col
+    fi
+}
+
+__EDITOR__.selection_end_row(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property selection_end_row = "$2"
+    else
+        __EDITOR__.property selection_end_row
+    fi
+}
+
+__EDITOR__.selection_end_col(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property selection_end_col = "$2"
+    else
+        __EDITOR__.property selection_end_col
+    fi
+}
+
+__EDITOR__.selection_marking(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property selection_marking = "$2"
+    else
+        __EDITOR__.property selection_marking
+    fi
+}
+
+__EDITOR__.appframe_created(){
+    if [ "$1" = "=" ]; then
+        __EDITOR__.property appframe_created = "$2"
+    else
+        local val=$(__EDITOR__.property appframe_created)
+        echo "${val:-0}"
+    fi
+}
+
+# Text buffer
+declare -ag __EDITOR___lines=()
+
+# Clipboard buffer
+declare -ag __EDITOR___clipboard=()
+
+# Internal appframe instance
+# REMOVED: __EDITOR___appframe_created=0  (now a property)
+
+# Terminal dimensions
+EDITOR_VIEWPORT_HEIGHT=20
+EDITOR_VIEWPORT_WIDTH=80
+EDITOR_STATUS_ROW=1
+EDITOR_START_ROW=2
+EDITOR_HELP_ROW=24
+
+# Load file
+__EDITOR__.load(){
+    local filepath="$1"
+    
+    __EDITOR__.filepath = "$filepath"
+    __EDITOR___lines=()
+    __EDITOR__.modified = 0
+    __EDITOR__.cursor_row = 0
+    __EDITOR__.cursor_col = 0
+    __EDITOR__.viewport_top = 0
+    __EDITOR__.viewport_left = 0
+    __EDITOR__.selection_active = 0
+    __EDITOR__.selection_start_row = 0
+    __EDITOR__.selection_start_col = 0
+    __EDITOR__.selection_end_row = 0
+    __EDITOR__.selection_end_col = 0
+    __EDITOR__.selection_marking = 0
+    
+    # Load file if it exists
+    if [ -f "$filepath" ]; then
+        local i=0
+        while IFS= read -r line; do
+            # Strip carriage returns
+            line="${line%$'\r'}"
+            __EDITOR___lines[$i]="$line"
+            ((i++)) || true
+        done < "$filepath"
+        
+        # Ensure at least one line
+        if [ ${#__EDITOR___lines[@]} -eq 0 ]; then
+            __EDITOR___lines[0]=""
+        fi
+    else
+        # New file - start with one empty line
+        __EDITOR___lines[0]=""
+    fi
+}
+
+# Save file
+__EDITOR__.save(){
+    local filepath=$(__EDITOR__.filepath)
+    
+    # Write all lines to file
+    printf "%s\n" "${__EDITOR___lines[@]}" > "$filepath"
+    __EDITOR__.modified = 0
+}
+
+# Draw status bar
+__EDITOR__.draw_status(){
+    local filepath=$(__EDITOR__.filepath)
+    local modified=$(__EDITOR__.modified)
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    
+    tui.cursor.move $EDITOR_STATUS_ROW 1
+    tui.color.black
+    tui.color.bg_cyan
+    
+    # Build status
+    local status="  $filepath"
+    if [ $modified -eq 1 ]; then
+        status+=" [Modified]"
+    else
+        status+=" [Saved]"
+    fi
+    
+    # Position info
+    local pos_info="Ln $((cursor_row + 1)), Col $((cursor_col + 1))"
+    
+    # Pad and show
+    local padding=$((EDITOR_VIEWPORT_WIDTH - ${#status} - ${#pos_info}))
+    printf "%s%${padding}s%s" "$status" "" "$pos_info"
+    
+    tui.color.reset
+}
+
+# Draw help bar (uses appframe)
+__EDITOR__.draw_help(){
+    __EDITOR___appframe.draw_fkeys "Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit"
+}
+
+# Draw content
+__EDITOR__.draw_content(){
+    local viewport_top=$(__EDITOR__.viewport_top)
+    local viewport_left=$(__EDITOR__.viewport_left)
+    
+    # Get selection bounds if active
+    local sel_active=$(__EDITOR__.selection_active)
+    local sel_start_row=$(__EDITOR__.selection_start_row)
+    local sel_start_col=$(__EDITOR__.selection_start_col)
+    local sel_end_row=$(__EDITOR__.selection_end_row)
+    local sel_end_col=$(__EDITOR__.selection_end_col)
+    
+    # Normalize selection (ensure start is before end)
+    if [ $sel_active -eq 1 ]; then
+        if [ $sel_start_row -gt $sel_end_row ] || ([ $sel_start_row -eq $sel_end_row ] && [ $sel_start_col -gt $sel_end_col ]); then
+            local tmp=$sel_start_row; sel_start_row=$sel_end_row; sel_end_row=$tmp
+            tmp=$sel_start_col; sel_start_col=$sel_end_col; sel_end_col=$tmp
+        fi
+    fi
+    
+    local screen_row=$EDITOR_START_ROW
+    
+    for ((i=0; i<EDITOR_VIEWPORT_HEIGHT; i++)); do
+        local file_row=$((viewport_top + i))
+        
+        tui.cursor.move $screen_row 1
+        
+        # Blue background for editor
+        tui.color.bg_blue
+        tui.color.bright_white
+        
+        # Clear line with blue background
+        printf "%${EDITOR_VIEWPORT_WIDTH}s" ""
+        
+        tui.cursor.move $screen_row 1
+        
+        if [ $file_row -lt ${#__EDITOR___lines[@]} ]; then
+            # Show line content with selection highlighting
+            local line="${__EDITOR___lines[$file_row]}"
+            
+            # Check if this line has selection
+            local has_selection=0
+            local sel_col_start=0
+            local sel_col_end=${#line}
+            
+            if [ $sel_active -eq 1 ]; then
+                if [ $file_row -ge $sel_start_row ] && [ $file_row -le $sel_end_row ]; then
+                    has_selection=1
+                    
+                    if [ $file_row -eq $sel_start_row ]; then
+                        sel_col_start=$sel_start_col
+                    fi
+                    
+                    if [ $file_row -eq $sel_end_row ]; then
+                        # Selection is EXCLUSIVE of end position (don't highlight char under cursor)
+                        sel_col_end=$sel_end_col
+                    fi
+                fi
+            fi
+            
+            # Apply horizontal scroll
+            local visible_start=$viewport_left
+            local visible_end=$((viewport_left + EDITOR_VIEWPORT_WIDTH))
+            
+            # Draw character by character with selection highlighting
+            for ((col=visible_start; col<visible_end && col<${#line}; col++)); do
+                local char="${line:$col:1}"
+                
+                if [ $has_selection -eq 1 ] && [ $col -ge $sel_col_start ] && [ $col -lt $sel_col_end ]; then
+                    # Character is selected - cyan background with black text (like status bar)
+                    tui.color.bg_cyan
+                    tui.color.black
+                    tui.color.bold
+                    printf "%s" "$char"
+                    tui.color.reset
+                    tui.color.bg_blue
+                    tui.color.bright_white
+                else
+                    # Normal character
+                    printf "%s" "$char"
+                fi
+            done
+        else
+            # Show tilde for lines beyond end of file
+            tui.color.bg_blue
+            tui.color.white
+            printf "~"
+        fi
+        
+        tui.color.reset
+        ((screen_row++))
+    done
+}
+
+# Update cursor position on screen
+__EDITOR__.update_cursor(){
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    local viewport_top=$(__EDITOR__.viewport_top)
+    local viewport_left=$(__EDITOR__.viewport_left)
+    
+    local screen_row=$((EDITOR_START_ROW + cursor_row - viewport_top))
+    local screen_col=$((1 + cursor_col - viewport_left))
+    
+    tui.cursor.move $screen_row $screen_col
+}
+
+# Adjust viewport to keep cursor visible
+__EDITOR__.adjust_viewport(){
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    local viewport_top=$(__EDITOR__.viewport_top)
+    local viewport_left=$(__EDITOR__.viewport_left)
+    
+    # Vertical scrolling
+    if [ $cursor_row -lt $viewport_top ]; then
+        viewport_top=$cursor_row
+    elif [ $cursor_row -ge $((viewport_top + EDITOR_VIEWPORT_HEIGHT)) ]; then
+        viewport_top=$((cursor_row - EDITOR_VIEWPORT_HEIGHT + 1))
+    fi
+    
+    # Horizontal scrolling
+    if [ $cursor_col -lt $viewport_left ]; then
+        viewport_left=$cursor_col
+    elif [ $cursor_col -ge $((viewport_left + EDITOR_VIEWPORT_WIDTH)) ]; then
+        viewport_left=$((cursor_col - EDITOR_VIEWPORT_WIDTH + 1))
+    fi
+    
+    __EDITOR__.viewport_top = $viewport_top
+    __EDITOR__.viewport_left = $viewport_left
+}
+
+# Move cursor
+__EDITOR__.move_cursor(){
+    local direction=$1
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    
+    case $direction in
+        UP)
+            if [ $cursor_row -gt 0 ]; then
+                cursor_row=$((cursor_row - 1))
+                # Clamp column to line length
+                local line_len=${#__EDITOR___lines[$cursor_row]}
+                if [ $cursor_col -gt $line_len ]; then
+                    cursor_col=$line_len
+                fi
+            fi
+            ;;
+        DOWN)
+            if [ $cursor_row -lt $((${#__EDITOR___lines[@]} - 1)) ]; then
+                cursor_row=$((cursor_row + 1))
+                # Clamp column to line length
+                local line_len=${#__EDITOR___lines[$cursor_row]}
+                if [ $cursor_col -gt $line_len ]; then
+                    cursor_col=$line_len
+                fi
+            fi
+            ;;
+        LEFT)
+            if [ $cursor_col -gt 0 ]; then
+                cursor_col=$((cursor_col - 1))
+            elif [ $cursor_row -gt 0 ]; then
+                # Move to end of previous line
+                cursor_row=$((cursor_row - 1))
+                cursor_col=${#__EDITOR___lines[$cursor_row]}
+            fi
+            ;;
+        RIGHT)
+            local line_len=${#__EDITOR___lines[$cursor_row]}
+            if [ $cursor_col -lt $line_len ]; then
+                cursor_col=$((cursor_col + 1))
+            elif [ $cursor_row -lt $((${#__EDITOR___lines[@]} - 1)) ]; then
+                # Move to start of next line
+                cursor_row=$((cursor_row + 1))
+                cursor_col=0
+            fi
+            ;;
+        HOME)
+            cursor_col=0
+            ;;
+        END)
+            cursor_col=${#__EDITOR___lines[$cursor_row]}
+            ;;
+    esac
+    
+    __EDITOR__.cursor_row = $cursor_row
+    __EDITOR__.cursor_col = $cursor_col
+    
+    __EDITOR__.adjust_viewport
+}
+
+# Page up - move cursor up by viewport height
+__EDITOR__.page_up(){
+    local cursor_row=$(__EDITOR__.cursor_row)
+    
+    # Move up by viewport height, but not below 0
+    cursor_row=$((cursor_row - EDITOR_VIEWPORT_HEIGHT))
+    if [ $cursor_row -lt 0 ]; then
+        cursor_row=0
+    fi
+    
+    __EDITOR__.cursor_row = $cursor_row
+    __EDITOR__.adjust_viewport
+}
+
+# Page down - move cursor down by viewport height
+__EDITOR__.page_down(){
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local max_row=$((${#__EDITOR___lines[@]} - 1))
+    
+    # Move down by viewport height, but not beyond last line
+    cursor_row=$((cursor_row + EDITOR_VIEWPORT_HEIGHT))
+    if [ $cursor_row -gt $max_row ]; then
+        cursor_row=$max_row
+    fi
+    
+    __EDITOR__.cursor_row = $cursor_row
+    __EDITOR__.adjust_viewport
+}
+
+# Insert character
+__EDITOR__.insert_char(){
+    local char="$1"
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    local line="${__EDITOR___lines[$cursor_row]}"
+    
+    # Insert character
+    __EDITOR___lines[$cursor_row]="${line:0:$cursor_col}${char}${line:$cursor_col}"
+    
+    # Move cursor forward
+    cursor_col=$((cursor_col + 1))
+    __EDITOR__.cursor_col = $cursor_col
+    __EDITOR__.modified = 1
+    
+    __EDITOR__.adjust_viewport
+}
+
+# Handle backspace
+__EDITOR__.backspace(){
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    
+    if [ $cursor_col -gt 0 ]; then
+        # Delete character before cursor
+        local line="${__EDITOR___lines[$cursor_row]}"
+        __EDITOR___lines[$cursor_row]="${line:0:$((cursor_col-1))}${line:$cursor_col}"
+        cursor_col=$((cursor_col - 1))
+        __EDITOR__.cursor_col = $cursor_col
+        __EDITOR__.modified = 1
+    elif [ $cursor_row -gt 0 ]; then
+        # Join with previous line
+        local prev_len=${#__EDITOR___lines[$((cursor_row - 1))]}
+        __EDITOR___lines[$((cursor_row - 1))]+="${__EDITOR___lines[$cursor_row]}"
+        
+        # Remove current line
+        unset __EDITOR___lines[$cursor_row]
+        __EDITOR___lines=("${__EDITOR___lines[@]}")  # Re-index array
+        
+        # Move cursor
+        cursor_row=$((cursor_row - 1))
+        cursor_col=$prev_len
+        __EDITOR__.cursor_row = $cursor_row
+        __EDITOR__.cursor_col = $cursor_col
+        __EDITOR__.modified = 1
+    fi
+    
+    __EDITOR__.adjust_viewport
+}
+
+# Handle delete
+__EDITOR__.delete(){
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    local line="${__EDITOR___lines[$cursor_row]}"
+    local line_len=${#line}
+    
+    if [ $cursor_col -lt $line_len ]; then
+        # Delete character at cursor
+        __EDITOR___lines[$cursor_row]="${line:0:$cursor_col}${line:$((cursor_col+1))}"
+        __EDITOR__.modified = 1
+    elif [ $cursor_row -lt $((${#__EDITOR___lines[@]} - 1)) ]; then
+        # Join with next line
+        __EDITOR___lines[$cursor_row]+="${__EDITOR___lines[$((cursor_row + 1))]}"
+        
+        # Remove next line
+        unset __EDITOR___lines[$((cursor_row + 1))]
+        __EDITOR___lines=("${__EDITOR___lines[@]}")  # Re-index array
+        __EDITOR__.modified = 1
+    fi
+}
+
+# Handle enter
+__EDITOR__.enter(){
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    local line="${__EDITOR___lines[$cursor_row]}"
+    
+    # Split line at cursor
+    local before="${line:0:$cursor_col}"
+    local after="${line:$cursor_col}"
+    
+    __EDITOR___lines[$cursor_row]="$before"
+    
+    # Insert new line after current
+    local new_lines=()
+    for ((i=0; i<=cursor_row; i++)); do
+        new_lines+=("${__EDITOR___lines[$i]}")
+    done
+    new_lines+=("$after")
+    for ((i=cursor_row+1; i<${#__EDITOR___lines[@]}; i++)); do
+        new_lines+=("${__EDITOR___lines[$i]}")
+    done
+    __EDITOR___lines=("${new_lines[@]}")
+    
+    # Move cursor to start of new line
+    cursor_row=$((cursor_row + 1))
+    cursor_col=0
+    __EDITOR__.cursor_row = $cursor_row
+    __EDITOR__.cursor_col = $cursor_col
+    __EDITOR__.modified = 1
+    
+    __EDITOR__.adjust_viewport
+}
+
+# Toggle selection (F3)
+__EDITOR__.toggle_selection(){
+    local active=$(__EDITOR__.selection_active)
+    local marking=$(__EDITOR__.selection_marking)
+    
+    if [ $active -eq 0 ]; then
+        # Start selection at current cursor position
+        __EDITOR__.selection_active = 1
+        __EDITOR__.selection_marking = 1  # Start actively marking
+        __EDITOR__.selection_start_row = $(__EDITOR__.cursor_row)
+        __EDITOR__.selection_start_col = $(__EDITOR__.cursor_col)
+        __EDITOR__.selection_end_row = $(__EDITOR__.cursor_row)
+        __EDITOR__.selection_end_col = $(__EDITOR__.cursor_col)
+    elif [ $marking -eq 1 ]; then
+        # Currently marking - freeze the selection (stop updating end on cursor move)
+        __EDITOR__.selection_marking = 0
+        __EDITOR__.selection_end_row = $(__EDITOR__.cursor_row)
+        __EDITOR__.selection_end_col = $(__EDITOR__.cursor_col)
+    else
+        # Selection is frozen - clear it
+        __EDITOR__.selection_active = 0
+        __EDITOR__.selection_marking = 0
+    fi
+}
+
+# Clear selection
+__EDITOR__.clear_selection(){
+    __EDITOR__.selection_active = 0
+    __EDITOR__.selection_marking = 0
+}
+
+# Delete current line (F8)
+__EDITOR__.delete_line(){
+    local cursor_row=$(__EDITOR__.cursor_row)
+    
+    # Remove current line
+    if [ ${#__EDITOR___lines[@]} -gt 1 ]; then
+        unset __EDITOR___lines[$cursor_row]
+        __EDITOR___lines=("${__EDITOR___lines[@]}")  # Re-index array
+        
+        # Adjust cursor if at end
+        if [ $cursor_row -ge ${#__EDITOR___lines[@]} ]; then
+            cursor_row=$((${#__EDITOR___lines[@]} - 1))
+            __EDITOR__.cursor_row = $cursor_row
+        fi
+    else
+        # Last line - just clear it
+        __EDITOR___lines[0]=""
+    fi
+    
+    __EDITOR__.cursor_col = 0
+    __EDITOR__.modified = 1
+    __EDITOR__.adjust_viewport
+}
+
+# Copy selection to clipboard (F5 starts copy)
+__EDITOR__.copy_selection(){
+    local start_row=$(__EDITOR__.selection_start_row)
+    local start_col=$(__EDITOR__.selection_start_col)
+    local end_row=$(__EDITOR__.selection_end_row)
+    local end_col=$(__EDITOR__.selection_end_col)
+    
+    # Ensure start is before end
+    if [ $start_row -gt $end_row ] || ([ $start_row -eq $end_row ] && [ $start_col -gt $end_col ]); then
+        local tmp_row=$start_row
+        local tmp_col=$start_col
+        start_row=$end_row
+        start_col=$end_col
+        end_row=$tmp_row
+        end_col=$tmp_col
+    fi
+    
+    # Copy to clipboard
+    __EDITOR___clipboard=()
+    
+    if [ $start_row -eq $end_row ]; then
+        # Single line selection
+        local line="${__EDITOR___lines[$start_row]}"
+        __EDITOR___clipboard+=("${line:$start_col:$((end_col - start_col))}")
+    else
+        # Multi-line selection
+        # First line
+        local line="${__EDITOR___lines[$start_row]}"
+        __EDITOR___clipboard+=("${line:$start_col}")
+        
+        # Middle lines
+        for ((i=start_row+1; i<end_row; i++)); do
+            __EDITOR___clipboard+=("${__EDITOR___lines[$i]}")
+        done
+        
+        # Last line
+        line="${__EDITOR___lines[$end_row]}"
+        __EDITOR___clipboard+=("${line:0:$end_col}")
+    fi
+}
+
+# Paste clipboard at cursor
+__EDITOR__.paste_clipboard(){
+    if [ ${#__EDITOR___clipboard[@]} -eq 0 ]; then
+        return
+    fi
+    
+    local cursor_row=$(__EDITOR__.cursor_row)
+    local cursor_col=$(__EDITOR__.cursor_col)
+    
+    if [ ${#__EDITOR___clipboard[@]} -eq 1 ]; then
+        # Single line paste - insert into current line
+        local line="${__EDITOR___lines[$cursor_row]}"
+        local before="${line:0:$cursor_col}"
+        local after="${line:$cursor_col}"
+        __EDITOR___lines[$cursor_row]="$before${__EDITOR___clipboard[0]}$after"
+        __EDITOR__.cursor_col = $((cursor_col + ${#__EDITOR___clipboard[0]}))
+    else
+        # Multi-line paste
+        local line="${__EDITOR___lines[$cursor_row]}"
+        local before="${line:0:$cursor_col}"
+        local after="${line:$cursor_col}"
+        
+        # Build new lines array
+        local new_lines=()
+        
+        # Lines before cursor
+        for ((i=0; i<cursor_row; i++)); do
+            new_lines+=("${__EDITOR___lines[$i]}")
+        done
+        
+        # First clipboard line appended to current line
+        new_lines+=("$before${__EDITOR___clipboard[0]}")
+        
+        # Middle clipboard lines
+        for ((i=1; i<${#__EDITOR___clipboard[@]}-1; i++)); do
+            new_lines+=("${__EDITOR___clipboard[$i]}")
+        done
+        
+        # Last clipboard line prepended to rest of current line
+        new_lines+=("${__EDITOR___clipboard[${#__EDITOR___clipboard[@]}-1]}$after")
+        
+        # Lines after cursor
+        for ((i=cursor_row+1; i<${#__EDITOR___lines[@]}; i++)); do
+            new_lines+=("${__EDITOR___lines[$i]}")
+        done
+        
+        __EDITOR___lines=("${new_lines[@]}")
+        __EDITOR__.cursor_row = $((cursor_row + ${#__EDITOR___clipboard[@]} - 1))
+        __EDITOR__.cursor_col = ${#__EDITOR___clipboard[${#__EDITOR___clipboard[@]}-1]}
+    fi
+    
+    __EDITOR__.modified = 1
+    __EDITOR__.adjust_viewport
+}
+
+# Delete selection
+__EDITOR__.delete_selection(){
+    local start_row=$(__EDITOR__.selection_start_row)
+    local start_col=$(__EDITOR__.selection_start_col)
+    local end_row=$(__EDITOR__.selection_end_row)
+    local end_col=$(__EDITOR__.selection_end_col)
+    
+    # Ensure start is before end
+    if [ $start_row -gt $end_row ] || ([ $start_row -eq $end_row ] && [ $start_col -gt $end_col ]); then
+        local tmp_row=$start_row
+        local tmp_col=$start_col
+        start_row=$end_row
+        start_col=$end_col
+        end_row=$tmp_row
+        end_col=$tmp_col
+    fi
+    
+    if [ $start_row -eq $end_row ]; then
+        # Single line deletion
+        local line="${__EDITOR___lines[$start_row]}"
+        __EDITOR___lines[$start_row]="${line:0:$start_col}${line:$end_col}"
+    else
+        # Multi-line deletion
+        local first_line="${__EDITOR___lines[$start_row]}"
+        local last_line="${__EDITOR___lines[$end_row]}"
+        
+        # Join first and last line parts
+        __EDITOR___lines[$start_row]="${first_line:0:$start_col}${last_line:$end_col}"
+        
+        # Remove lines in between
+        local new_lines=()
+        for ((i=0; i<=start_row; i++)); do
+            new_lines+=("${__EDITOR___lines[$i]}")
+        done
+        for ((i=end_row+1; i<${#__EDITOR___lines[@]}; i++)); do
+            new_lines+=("${__EDITOR___lines[$i]}")
+        done
+        __EDITOR___lines=("${new_lines[@]}")
+    fi
+    
+    # Move cursor to start of deleted selection
+    __EDITOR__.cursor_row = $start_row
+    __EDITOR__.cursor_col = $start_col
+    __EDITOR__.modified = 1
+    __EDITOR__.adjust_viewport
+}
+
+# Show editor (blocking - runs until user exits)
+__EDITOR__.show(){
+    # Create appframe if not already created
+    local appframe_created=$(__EDITOR__.appframe_created)
+    if [ $appframe_created -eq 0 ]; then
+        appframe __EDITOR___appframe
+        __EDITOR__.appframe_created = 1
+    fi
+    
+    # Get filepath for title
+    local filepath=$(__EDITOR__.filepath)
+    local filename=$(basename "$filepath")
+    
+    # Configure appframe
+    __EDITOR___appframe.title = " $filename"
+    __EDITOR___appframe.show_cursor = 1  # Show cursor for editing
+    
+    # Setup
+    __EDITOR___appframe.setup
+    
+    # Get dimensions
+    local rows=$(__EDITOR___appframe.rows)
+    local cols=$(__EDITOR___appframe.cols)
+    
+    EDITOR_VIEWPORT_HEIGHT=$(__EDITOR___appframe.main_height)
+    EDITOR_VIEWPORT_WIDTH=$cols
+    EDITOR_HELP_ROW=$rows
+    
+    # Draw initial screen
+    tui.screen.clear
+    __EDITOR__.draw_status
+    __EDITOR__.draw_content
+    __EDITOR__.draw_help
+    __EDITOR__.update_cursor
+    
+    # Editor loop
+    while true; do
+        local key=$(tui.input.key)
+        
+        case "$key" in
+            # Navigation
+            UP|DOWN|LEFT|RIGHT|HOME|END)
+                __EDITOR__.move_cursor "$key"
+                
+                # If actively marking selection, update end position
+                local sel_marking=$(__EDITOR__.selection_marking)
+                if [ $sel_marking -eq 1 ]; then
+                    __EDITOR__.selection_end_row = $(__EDITOR__.cursor_row)
+                    __EDITOR__.selection_end_col = $(__EDITOR__.cursor_col)
+                fi
+                
+                __EDITOR__.draw_content
+                __EDITOR__.draw_status
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Page Up
+            PAGEUP)
+                __EDITOR__.page_up
+                __EDITOR__.draw_content
+                __EDITOR__.draw_status
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Page Down
+            PAGEDOWN)
+                __EDITOR__.page_down
+                __EDITOR__.draw_content
+                __EDITOR__.draw_status
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Enter
+            ENTER)
+                __EDITOR__.enter
+                tui.screen.clear
+                __EDITOR__.draw_status
+                __EDITOR__.draw_content
+                __EDITOR__.draw_help
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Backspace
+            BACKSPACE)
+                __EDITOR__.backspace
+                tui.screen.clear
+                __EDITOR__.draw_status
+                __EDITOR__.draw_content
+                __EDITOR__.draw_help
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Delete
+            DELETE)
+                __EDITOR__.delete
+                tui.screen.clear
+                __EDITOR__.draw_status
+                __EDITOR__.draw_content
+                __EDITOR__.draw_help
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Save (F2)
+            F2)
+                __EDITOR__.save
+                __EDITOR__.draw_status
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Toggle selection (F3)
+            F3)
+                __EDITOR__.toggle_selection
+                __EDITOR__.draw_content
+                __EDITOR__.draw_status
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Copy selection (F5)
+            F5)
+                __EDITOR__.copy_selection
+                __EDITOR__.paste_clipboard
+                # Don't clear selection - keep it visible
+                tui.screen.clear
+                __EDITOR__.draw_status
+                __EDITOR__.draw_content
+                __EDITOR__.draw_help
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Move selection (F6 - cut and paste)
+            F6)
+                # Only work if selection exists
+                local sel_active=$(__EDITOR__.selection_active)
+                
+                if [ $sel_active -eq 0 ]; then
+                    # No selection - do nothing
+                    continue
+                fi
+                
+                # Save current cursor position BEFORE any operations
+                local target_row=$(__EDITOR__.cursor_row)
+                local target_col=$(__EDITOR__.cursor_col)
+                
+                # Copy selection to clipboard
+                __EDITOR__.copy_selection
+                
+                # Get normalized selection bounds
+                local sel_start_row=$(__EDITOR__.selection_start_row)
+                local sel_start_col=$(__EDITOR__.selection_start_col)
+                local sel_end_row=$(__EDITOR__.selection_end_row)
+                local sel_end_col=$(__EDITOR__.selection_end_col)
+                
+                if [ $sel_start_row -gt $sel_end_row ] || ([ $sel_start_row -eq $sel_end_row ] && [ $sel_start_col -gt $sel_end_col ]); then
+                    local tmp=$sel_start_row; sel_start_row=$sel_end_row; sel_end_row=$tmp
+                    tmp=$sel_start_col; sel_start_col=$sel_end_col; sel_end_col=$tmp
+                fi
+                
+                # Calculate how deletion will affect cursor position
+                local adjusted_row=$target_row
+                local adjusted_col=$target_col
+                
+                if [ $target_row -gt $sel_end_row ]; then
+                    # Cursor after selection - adjust for deleted lines
+                    adjusted_row=$((target_row - (sel_end_row - sel_start_row)))
+                elif [ $target_row -eq $sel_end_row ] && [ $target_col -ge $sel_end_col ]; then
+                    # Cursor on selection end line, after selection
+                    if [ $sel_start_row -eq $sel_end_row ]; then
+                        # Single line - just adjust column
+                        adjusted_col=$((target_col - (sel_end_col - sel_start_col)))
+                    else
+                        # Multi-line - move to start line
+                        adjusted_row=$sel_start_row
+                        adjusted_col=$((sel_start_col + target_col - sel_end_col))
+                    fi
+                elif [ $target_row -ge $sel_start_row ] && [ $target_row -le $sel_end_row ]; then
+                    # Cursor inside selection - move to start
+                    adjusted_row=$sel_start_row
+                    adjusted_col=$sel_start_col
+                fi
+                # If cursor before selection, no adjustment needed
+                
+                # Delete selection
+                __EDITOR__.delete_selection
+                
+                # Move cursor to adjusted target position
+                __EDITOR__.cursor_row = $adjusted_row
+                __EDITOR__.cursor_col = $adjusted_col
+                
+                # Paste at current cursor position
+                __EDITOR__.paste_clipboard
+                
+                # Clear selection
+                __EDITOR__.clear_selection
+                
+                tui.screen.clear
+                __EDITOR__.draw_status
+                __EDITOR__.draw_content
+                __EDITOR__.draw_help
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Delete line (F8)
+            F8)
+                __EDITOR__.delete_line
+                tui.screen.clear
+                __EDITOR__.draw_status
+                __EDITOR__.draw_content
+                __EDITOR__.draw_help
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Clear selection (ESC)
+            ESC)
+                __EDITOR__.clear_selection
+                __EDITOR__.draw_content
+                __EDITOR__.update_cursor
+                ;;
+            
+            # Exit (F10)
+            F10)
+                local modified=$(__EDITOR__.modified)
+                if [ $modified -eq 1 ]; then
+                    __EDITOR__.save
+                fi
+                break
+                ;;
+            
+            # Regular character
+            *)
+                # Only accept printable characters
+                if [ ${#key} -eq 1 ]; then
+                    __EDITOR__.insert_char "$key"
+                    __EDITOR__.draw_content
+                    __EDITOR__.draw_status
+                    __EDITOR__.update_cursor
+                fi
+                ;;
+        esac
+    done
+    
+    # Cleanup
+    __EDITOR___appframe.cleanup
+}
+
+# Open file (convenience method that loads and shows)
+__EDITOR__.open(){
+    local filepath="$1"
+    __EDITOR__.load "$filepath"
+    __EDITOR__.show
+}

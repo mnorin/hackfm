@@ -1,0 +1,683 @@
+#!/bin/bash
+# filelist.class - File listing using ba.sh
+
+__FILELIST___properties=()
+
+__FILELIST__.property(){
+    # Property indices
+    local path=0
+    local selected=1
+    local scroll=2
+    local marked_size=3
+    local marked_count=4
+    local sort_order=5
+    
+    if [ "$2" = "=" ]; then
+        __FILELIST___properties[$1]="$3"
+    else
+        echo "${__FILELIST___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__FILELIST__.path(){
+    if [ "$1" = "=" ]; then
+        __FILELIST__.property path = "$2"
+        # Auto-load when path changes
+        __FILELIST__.load "$2"
+    else
+        __FILELIST__.property path
+    fi
+}
+
+__FILELIST__.selected(){
+    if [ "$1" = "=" ]; then
+        __FILELIST__.property selected = "$2"
+    else
+        __FILELIST__.property selected
+    fi
+}
+
+__FILELIST__.scroll(){
+    if [ "$1" = "=" ]; then
+        __FILELIST__.property scroll = "$2"
+    else
+        __FILELIST__.property scroll
+    fi
+}
+
+__FILELIST__.marked_size(){
+    __FILELIST__.property marked_size
+}
+
+__FILELIST__.marked_count(){
+    __FILELIST__.property marked_count
+}
+
+__FILELIST__.sort_order(){
+    if [ "$1" = "=" ]; then
+        __FILELIST__.property sort_order = "$2"
+    else
+        local val=$(__FILELIST__.property sort_order)
+        echo "${val:-name_asc}"
+    fi
+}
+
+# Arrays for files and their metadata
+declare -ag __FILELIST___files=()
+declare -ag __FILELIST___types=()
+declare -ag __FILELIST___sizes=()
+declare -ag __FILELIST___times=()
+declare -ag __FILELIST___execs=()
+declare -ag __FILELIST___marked=()  # Array of marked file indices
+declare -ag __FILELIST___link_targets=()  # Symlink targets (empty for non-links)
+declare -ag __FILELIST___rendered_rows=()  # Pre-rendered row strings with colors/formatting
+
+# Sort index arrays (map display index -> actual data index)
+declare -ag __FILELIST___index_name_asc=()
+declare -ag __FILELIST___index_name_desc=()
+declare -ag __FILELIST___index_date_asc=()
+declare -ag __FILELIST___index_date_desc=()
+declare -ag __FILELIST___index_size_asc=()
+declare -ag __FILELIST___index_size_desc=()
+declare -ag __FILELIST___index_ext_asc=()
+declare -ag __FILELIST___index_ext_desc=()
+
+# Load directory
+__FILELIST__.load(){
+    local path=$(__FILELIST__.path)
+    
+    # Clear all data
+    __FILELIST___files=()
+    __FILELIST___types=()
+    __FILELIST___sizes=()
+    __FILELIST___times=()
+    __FILELIST___execs=()
+    __FILELIST___marked=()
+    __FILELIST___link_targets=()
+    __FILELIST__.selected = 0
+    __FILELIST__.scroll = 0
+    __FILELIST__.property marked_size = 0
+    __FILELIST__.property marked_count = 0
+    
+    # Initialize sort order to name_asc if not set
+    local current_sort=$(__FILELIST__.sort_order)
+    if [ -z "$current_sort" ]; then
+        __FILELIST__.sort_order = "name_asc"
+    fi
+    
+    # Clear index arrays
+    __FILELIST___index_name_asc=()
+    __FILELIST___index_name_desc=()
+    __FILELIST___index_date_asc=()
+    __FILELIST___index_date_desc=()
+    __FILELIST___index_size_asc=()
+    __FILELIST___index_size_desc=()
+    __FILELIST___index_ext_asc=()
+    __FILELIST___index_ext_desc=()
+    
+    # Add parent directory first
+    if [ "$path" != "/" ]; then
+        __FILELIST___files+=("..")
+        __FILELIST___types+=("d")
+        __FILELIST___sizes+=("UP--DIR")
+        __FILELIST___times+=("")
+        __FILELIST___execs+=("0")
+        __FILELIST___marked+=("0")
+        __FILELIST___link_targets+=("")
+    fi
+    
+    # Get all entries and categorize them
+    local -a dot_dirs=()
+    local -a reg_dirs=()
+    local -a dot_files=()
+    local -a reg_files=()
+    
+    # Get directories
+    while IFS= read -r -d '' entry; do
+        local basename=$(basename "$entry")
+        local mtime_raw=$(stat -c '%y' "$entry" 2>/dev/null)
+        # Extract first 16 chars of "YYYY-MM-DD HH:MM:SS" (drops fractional seconds)
+        local mtime="${mtime_raw:0:16}"
+        local link_target=""
+        
+        # Check if it's a symlink
+        if [ -L "$entry" ]; then
+            link_target=$(readlink "$entry" 2>/dev/null)
+        fi
+        
+        if [[ "$basename" == .* ]]; then
+            dot_dirs+=("$basename|SUB-DIR|$mtime|$link_target")
+        else
+            reg_dirs+=("$basename|SUB-DIR|$mtime|$link_target")
+        fi
+    done < <(find -L "$path" -maxdepth 1 -type d ! -path "$path" -print0 2>/dev/null | sort -z)
+    
+    # Get files
+    while IFS= read -r -d '' entry; do
+        local basename=$(basename "$entry")
+        local size=$(stat -c '%s' "$entry" 2>/dev/null)
+        local mtime_raw=$(stat -c '%y' "$entry" 2>/dev/null)
+        # Extract first 16 chars of "YYYY-MM-DD HH:MM:SS"
+        local mtime="${mtime_raw:0:16}"
+        local is_exec=0
+        local link_target=""
+        
+        # Check if it's a symlink
+        if [ -L "$entry" ]; then
+            link_target=$(readlink "$entry" 2>/dev/null)
+        fi
+        
+        # Check if executable
+        if [ -x "$entry" ]; then
+            is_exec=1
+        fi
+        
+        # Format size
+        local size_str
+        if [ $size -lt 1024 ]; then
+            size_str="${size}B"
+        elif [ $size -lt 1048576 ]; then
+            size_str="$((size / 1024))K"
+        else
+            size_str="$((size / 1048576))M"
+        fi
+        
+        if [[ "$basename" == .* ]]; then
+            dot_files+=("$basename|$size_str|$mtime|$is_exec|$link_target")
+        else
+            reg_files+=("$basename|$size_str|$mtime|$is_exec|$link_target")
+        fi
+    done < <(find -L "$path" -maxdepth 1 -type f -print0 2>/dev/null | sort -z)
+    
+    # Add in MC order: dot-dirs, dirs, dot-files, files
+    for entry in "${dot_dirs[@]}"; do
+        IFS='|' read -r name size mtime link_target <<< "$entry"
+        __FILELIST___files+=("$name")
+        __FILELIST___types+=("d")
+        __FILELIST___sizes+=("$size")
+        __FILELIST___times+=("$mtime")
+        __FILELIST___execs+=("0")
+        __FILELIST___marked+=("0")
+        __FILELIST___link_targets+=("$link_target")
+    done
+    
+    for entry in "${reg_dirs[@]}"; do
+        IFS='|' read -r name size mtime link_target <<< "$entry"
+        __FILELIST___files+=("$name")
+        __FILELIST___types+=("d")
+        __FILELIST___sizes+=("$size")
+        __FILELIST___times+=("$mtime")
+        __FILELIST___execs+=("0")
+        __FILELIST___marked+=("0")
+        __FILELIST___link_targets+=("$link_target")
+    done
+    
+    for entry in "${dot_files[@]}"; do
+        IFS='|' read -r name size mtime is_exec link_target <<< "$entry"
+        __FILELIST___files+=("$name")
+        __FILELIST___types+=("f")
+        __FILELIST___sizes+=("$size")
+        __FILELIST___times+=("$mtime")
+        __FILELIST___execs+=("$is_exec")
+        __FILELIST___marked+=("0")
+        __FILELIST___link_targets+=("$link_target")
+    done
+    
+    for entry in "${reg_files[@]}"; do
+        IFS='|' read -r name size mtime is_exec link_target <<< "$entry"
+        __FILELIST___files+=("$name")
+        __FILELIST___types+=("f")
+        __FILELIST___sizes+=("$size")
+        __FILELIST___times+=("$mtime")
+        __FILELIST___execs+=("$is_exec")
+        __FILELIST___marked+=("0")
+        __FILELIST___link_targets+=("$link_target")
+    done
+    
+    # Empty check
+    if [ ${#__FILELIST___files[@]} -eq 0 ]; then
+        __FILELIST___files=("<empty>")
+        __FILELIST___types+=("f")
+        __FILELIST___sizes+=("")
+        __FILELIST___times+=("")
+        __FILELIST___execs+=("0")
+        __FILELIST___link_targets+=("")
+    fi
+    
+    # Build all sort indices
+    __FILELIST__._build_sort_indices
+}
+
+# Build all sort index arrays
+__FILELIST__._build_sort_indices(){
+    local count=${#__FILELIST___files[@]}
+    
+    # Build sortable entries for each sort mode
+    local -a entries_name=()
+    local -a entries_date=()
+    local -a entries_size=()
+    local -a entries_ext=()
+    
+    for ((i=0; i<count; i++)); do
+        local filename="${__FILELIST___files[$i]}"
+        local filetype="${__FILELIST___types[$i]}"
+        local filesize="${__FILELIST___sizes[$i]}"
+        local filetime="${__FILELIST___times[$i]}"
+        
+        # Skip special entries from sorting
+        if [[ "$filename" == ".." || "$filename" == "<empty>" ]]; then
+            continue
+        fi
+        
+        # Sort key components
+        local type_key="1"  # files
+        [ "$filetype" = "d" ] && type_key="0"  # dirs first
+        
+        local dot_key="1"  # regular
+        [[ "$filename" == .* ]] && dot_key="0"  # dotted first
+        
+        # Extension
+        local ext=""
+        if [ "$filetype" = "f" ] && [[ "$filename" == *.* ]]; then
+            ext="${filename##*.}"
+        fi
+        
+        # Numeric size for sorting (convert back from formatted)
+        local size_num=0
+        if [[ "$filesize" =~ ^([0-9]+)([BKM])$ ]]; then
+            local num="${BASH_REMATCH[1]}"
+            local unit="${BASH_REMATCH[2]}"
+            case "$unit" in
+                B) size_num=$num ;;
+                K) size_num=$((num * 1024)) ;;
+                M) size_num=$((num * 1048576)) ;;
+            esac
+        fi
+        
+        # Build sort keys: type|dot|sortfield<TAB>index
+        # For name: sort by name first, then length (so "file" comes before "file1")
+        local name_len=${#filename}
+        entries_name+=("${type_key}|${dot_key}|${filename}|$(printf '%04d' $name_len)"$'\t'"$i")
+        entries_date+=("${type_key}|${dot_key}|${filetime}|${filename}"$'\t'"$i")
+        entries_size+=("${type_key}|${dot_key}|$(printf '%020d' $size_num)|${filename}"$'\t'"$i")
+        entries_ext+=("${type_key}|${dot_key}|${ext}|${filename}"$'\t'"$i")
+    done
+    
+    # Sort and extract indices for ascending order
+    while IFS=$'\t' read -r key idx; do
+        __FILELIST___index_name_asc+=("$idx")
+    done < <(printf '%s\n' "${entries_name[@]}" | sort -t'|' -k1,1 -k2,2 -k3,3 -k4,4)
+    
+    while IFS=$'\t' read -r key idx; do
+        __FILELIST___index_date_asc+=("$idx")
+    done < <(printf '%s\n' "${entries_date[@]}" | sort -t'|' -k1,1 -k2,2 -k3,3 -k4,4)
+    
+    while IFS=$'\t' read -r key idx; do
+        __FILELIST___index_size_asc+=("$idx")
+    done < <(printf '%s\n' "${entries_size[@]}" | sort -t'|' -k1,1 -k2,2 -k3,3 -k4,4)
+    
+    while IFS=$'\t' read -r key idx; do
+        __FILELIST___index_ext_asc+=("$idx")
+    done < <(printf '%s\n' "${entries_ext[@]}" | sort -t'|' -k1,1 -k2,2 -k3,3 -k4,4)
+    
+    # Descending order is just reversed
+    for ((i=${#__FILELIST___index_name_asc[@]}-1; i>=0; i--)); do
+        __FILELIST___index_name_desc+=("${__FILELIST___index_name_asc[$i]}")
+    done
+    
+    for ((i=${#__FILELIST___index_date_asc[@]}-1; i>=0; i--)); do
+        __FILELIST___index_date_desc+=("${__FILELIST___index_date_asc[$i]}")
+    done
+    
+    for ((i=${#__FILELIST___index_size_asc[@]}-1; i>=0; i--)); do
+        __FILELIST___index_size_desc+=("${__FILELIST___index_size_asc[$i]}")
+    done
+    
+    for ((i=${#__FILELIST___index_ext_asc[@]}-1; i>=0; i--)); do
+        __FILELIST___index_ext_desc+=("${__FILELIST___index_ext_asc[$i]}")
+    done
+    
+    # Handle special entries (.., <empty>) - prepend to all indices
+    for ((i=0; i<count; i++)); do
+        local filename="${__FILELIST___files[$i]}"
+        if [[ "$filename" == ".." || "$filename" == "<empty>" ]]; then
+            # Prepend special entries to all index arrays
+            __FILELIST___index_name_asc=("$i" "${__FILELIST___index_name_asc[@]}")
+            __FILELIST___index_name_desc=("$i" "${__FILELIST___index_name_desc[@]}")
+            __FILELIST___index_date_asc=("$i" "${__FILELIST___index_date_asc[@]}")
+            __FILELIST___index_date_desc=("$i" "${__FILELIST___index_date_desc[@]}")
+            __FILELIST___index_size_asc=("$i" "${__FILELIST___index_size_asc[@]}")
+            __FILELIST___index_size_desc=("$i" "${__FILELIST___index_size_desc[@]}")
+            __FILELIST___index_ext_asc=("$i" "${__FILELIST___index_ext_asc[@]}")
+            __FILELIST___index_ext_desc=("$i" "${__FILELIST___index_ext_desc[@]}")
+        fi
+    done
+}
+
+# Navigate
+__FILELIST__.navigate(){
+    local direction="$1"
+    local max_visible="${2:-20}"
+    
+    local selected=$(__FILELIST__.selected)
+    local scroll=$(__FILELIST__.scroll)
+    local count=${#__FILELIST___files[@]}
+    
+    case "$direction" in
+        UP)
+            if [ $selected -gt 0 ]; then
+                selected=$((selected - 1))
+                if [ $selected -lt $scroll ]; then
+                    scroll=$selected
+                fi
+            fi
+            ;;
+        DOWN)
+            if [ $selected -lt $((count - 1)) ]; then
+                selected=$((selected + 1))
+                if [ $selected -ge $((scroll + max_visible)) ]; then
+                    scroll=$((selected - max_visible + 1))
+                fi
+            fi
+            ;;
+        PAGEUP)
+            # Jump up by one page
+            selected=$((selected - max_visible))
+            if [ $selected -lt 0 ]; then
+                selected=0
+            fi
+            scroll=$((scroll - max_visible))
+            if [ $scroll -lt 0 ]; then
+                scroll=0
+            fi
+            ;;
+        PAGEDOWN)
+            # Jump down by one page
+            selected=$((selected + max_visible))
+            if [ $selected -ge $count ]; then
+                selected=$((count - 1))
+            fi
+            scroll=$((scroll + max_visible))
+            local max_scroll=$((count - max_visible))
+            if [ $max_scroll -lt 0 ]; then
+                max_scroll=0
+            fi
+            if [ $scroll -gt $max_scroll ]; then
+                scroll=$max_scroll
+            fi
+            ;;
+        HOME)
+            # Jump to first item
+            selected=0
+            scroll=0
+            ;;
+        END)
+            # Jump to last item
+            selected=$((count - 1))
+            scroll=$((count - max_visible))
+            if [ $scroll -lt 0 ]; then
+                scroll=0
+            fi
+            ;;
+    esac
+    
+    __FILELIST__.selected = $selected
+    __FILELIST__.scroll = $scroll
+}
+
+# Find item by name and select it (used when returning from subdirectory)
+__FILELIST__.find_and_select(){
+    local target_name="$1"
+    local max_visible="${2:-20}"
+    
+    local count=${#__FILELIST___files[@]}
+    
+    # Search for the item
+    for ((i=0; i<count; i++)); do
+        if [ "${__FILELIST___files[$i]}" = "$target_name" ]; then
+            # Found it - select and adjust scroll
+            __FILELIST__.selected = $i
+            
+            # Adjust scroll to make it visible
+            local scroll=$(__FILELIST__.scroll)
+            if [ $i -lt $scroll ]; then
+                scroll=$i
+            elif [ $i -ge $((scroll + max_visible)) ]; then
+                scroll=$((i - max_visible + 1))
+            fi
+            __FILELIST__.scroll = $scroll
+            return 0
+        fi
+    done
+    
+    # Not found - leave selection as is
+    return 1
+}
+
+# Toggle selection for current item
+__FILELIST__.toggle_selection(){
+    local selected=$(__FILELIST__.selected)
+    local filename="${__FILELIST___files[$selected]}"
+    
+    # Don't allow selecting .. or <empty>
+    if [[ "$filename" == ".." || "$filename" == "<empty>" ]]; then
+        return
+    fi
+    
+    local marked_size=$(__FILELIST__.marked_size)
+    local marked_count=$(__FILELIST__.marked_count)
+    
+    if [ "${__FILELIST___marked[$selected]}" = "1" ]; then
+        # Unmark
+        __FILELIST___marked[$selected]="0"
+        marked_count=$((marked_count - 1))
+        
+        # Subtract size if it's a regular file
+        if [ "${__FILELIST___types[$selected]}" = "f" ]; then
+            local item_size="${__FILELIST___sizes[$selected]}"
+            if [[ "$item_size" =~ ^[0-9]+[BKM]$ ]]; then
+                local size_num="${item_size%[BKM]}"
+                local size_unit="${item_size: -1}"
+                case "$size_unit" in
+                    B) marked_size=$((marked_size - size_num)) ;;
+                    K) marked_size=$((marked_size - size_num * 1024)) ;;
+                    M) marked_size=$((marked_size - size_num * 1048576)) ;;
+                esac
+            fi
+        fi
+    else
+        # Mark
+        __FILELIST___marked[$selected]="1"
+        marked_count=$((marked_count + 1))
+        
+        # Add size if it's a regular file
+        if [ "${__FILELIST___types[$selected]}" = "f" ]; then
+            local item_size="${__FILELIST___sizes[$selected]}"
+            if [[ "$item_size" =~ ^[0-9]+[BKM]$ ]]; then
+                local size_num="${item_size%[BKM]}"
+                local size_unit="${item_size: -1}"
+                case "$size_unit" in
+                    B) marked_size=$((marked_size + size_num)) ;;
+                    K) marked_size=$((marked_size + size_num * 1024)) ;;
+                    M) marked_size=$((marked_size + size_num * 1048576)) ;;
+                esac
+            fi
+        fi
+    fi
+    
+    # Update properties
+    __FILELIST__.property marked_size = $marked_size
+    __FILELIST__.property marked_count = $marked_count
+}
+
+# Get selected files (returns list of "filename|type" strings)
+__FILELIST__.get_selected(){
+    local path=$(__FILELIST__.path)
+    local count=${#__FILELIST___files[@]}
+    local result=()
+    
+    for ((i=0; i<count; i++)); do
+        if [ "${__FILELIST___marked[$i]}" = "1" ]; then
+            local filename="${__FILELIST___files[$i]}"
+            local filetype="${__FILELIST___types[$i]}"
+            # Don't include .. or <empty>
+            if [[ "$filename" != ".." && "$filename" != "<empty>" ]]; then
+                result+=("$filename|$filetype")
+            fi
+        fi
+    done
+    
+    # Print each selected file on a new line
+    printf '%s\n' "${result[@]}"
+}
+
+# Count selected files
+__FILELIST__.count_selected(){
+    __FILELIST__.marked_count
+}
+
+# Get selection info (count and size)
+# Returns: "count|size_bytes"
+__FILELIST__.selection_info(){
+    local count=${#__FILELIST___files[@]}
+    local selected_count=0
+    local total_bytes=0
+    
+    for ((i=0; i<count; i++)); do
+        if [ "${__FILELIST___selected[$i]}" = "1" ]; then
+            local filename="${__FILELIST___files[$i]}"
+            if [[ "$filename" != ".." && "$filename" != "<empty>" ]]; then
+                selected_count=$((selected_count + 1))
+                
+                # Calculate size
+                local item_size="${__FILELIST___sizes[$i]}"
+                local item_type="${__FILELIST___types[$i]}"
+                
+                if [ "$item_type" = "f" ] && [[ "$item_size" =~ ^[0-9]+[BKM]$ ]]; then
+                    local size_num="${item_size%[BKM]}"
+                    local size_unit="${item_size: -1}"
+                    
+                    case "$size_unit" in
+                        B) total_bytes=$((total_bytes + size_num)) ;;
+                        K) total_bytes=$((total_bytes + size_num * 1024)) ;;
+                        M) total_bytes=$((total_bytes + size_num * 1048576)) ;;
+                    esac
+                fi
+            fi
+        fi
+    done
+    
+    echo "$selected_count|$total_bytes"
+}
+
+# Check if filename is special (.. or <empty>)
+# Returns: 0 if special, 1 if normal
+__FILELIST__.is_special(){
+    local filename="$1"
+    [[ "$filename" == ".." || "$filename" == "<empty>" ]]
+}
+
+# Get file count
+__FILELIST__.count(){
+    echo "${#__FILELIST___files[@]}"
+}
+
+# Get file at index
+# Returns: filename|type|size|time|exec|selected (pipe-separated)
+__FILELIST__.get(){
+    local display_index="$1"
+    
+    # Get current sort order
+    local sort_order=$(__FILELIST__.sort_order)
+    
+    # Map display index to actual data index using sort order
+    local actual_idx
+    case "$sort_order" in
+        name_asc)  actual_idx="${__FILELIST___index_name_asc[$display_index]}" ;;
+        name_desc) actual_idx="${__FILELIST___index_name_desc[$display_index]}" ;;
+        date_asc)  actual_idx="${__FILELIST___index_date_asc[$display_index]}" ;;
+        date_desc) actual_idx="${__FILELIST___index_date_desc[$display_index]}" ;;
+        size_asc)  actual_idx="${__FILELIST___index_size_asc[$display_index]}" ;;
+        size_desc) actual_idx="${__FILELIST___index_size_desc[$display_index]}" ;;
+        ext_asc)   actual_idx="${__FILELIST___index_ext_asc[$display_index]}" ;;
+        ext_desc)  actual_idx="${__FILELIST___index_ext_desc[$display_index]}" ;;
+        *) actual_idx="$display_index" ;;  # fallback to no sorting
+    esac
+    
+    # Return data for actual index
+    echo "${__FILELIST___files[$actual_idx]}|${__FILELIST___types[$actual_idx]}|${__FILELIST___sizes[$actual_idx]}|${__FILELIST___times[$actual_idx]}|${__FILELIST___execs[$actual_idx]}|${__FILELIST___marked[$actual_idx]}|${__FILELIST___link_targets[$actual_idx]}"
+}
+
+# Render a single file row as a formatted string (called by panel)
+# Args: index, width, is_cursor, is_active_panel
+__FILELIST__.render_row(){
+    local index=$1
+    local width=$2
+    local is_cursor=$3
+    local is_active=$4
+    
+    local filename="${__FILELIST___files[$index]}"
+    local item_type="${__FILELIST___types[$index]}"
+    local item_size="${__FILELIST___sizes[$index]}"
+    local item_time="${__FILELIST___times[$index]}"
+    local is_exec="${__FILELIST___execs[$index]}"
+    local is_marked="${__FILELIST___marked[$index]}"
+    
+    # Calculate column widths
+    local time_col_width=17
+    local size_col_width=9
+    local name_col_width=$((width - time_col_width - size_col_width - 2))
+    
+    # Set prefix character
+    local prefix=" "
+    if [ "$item_type" = "d" ]; then
+        prefix="/"
+    elif [ "$is_exec" = "1" ]; then
+        prefix="*"
+    fi
+    
+    # Truncate filename if needed
+    local max_filename_len=$((name_col_width - 1))
+    if [ ${#filename} -gt $max_filename_len ]; then
+        filename="${filename:0:$((max_filename_len - 3))}..."
+    fi
+    
+    # Manually pad filename
+    local filename_visual_len=${#filename}
+    local padding_needed=$((max_filename_len - filename_visual_len))
+    local padding=""
+    if [ $padding_needed -gt 0 ]; then
+        padding=$(printf '%*s' "$padding_needed" "")
+    fi
+    
+    # Build the row with colors
+    local row=""
+    
+    # Background color
+    row+="\033[44m"  # Blue background
+    
+    # Name column with color
+    if [ $is_cursor -eq 1 ] && [ $is_active -eq 1 ]; then
+        row+="\033[46m\033[30m\033[1m"  # Cyan bg, black text, bold
+    elif [ "$is_marked" = "1" ]; then
+        row+="\033[44m\033[33m\033[1m"  # Blue bg, yellow text, bold
+    else
+        if [ "$item_type" = "d" ]; then
+            row+="\033[37m\033[1m"  # White, bold
+        elif [ "$is_exec" = "1" ]; then
+            row+="\033[92m"  # Bright green
+        else
+            row+="\033[97m"  # Bright white
+        fi
+    fi
+    row+="${prefix}${filename}${padding}"
+    
+    # Separator and remaining columns
+    row+="\033[0m\033[44m\033[97m"  # Reset, blue bg, bright white
+    local display_time="${item_time:0:$time_col_width}"
+    row+="│$(printf "%${size_col_width}s" "$item_size")│$(printf "%-${time_col_width}s" "$display_time")"
+    row+="\033[0m"  # Reset
+    
+    echo "$row"
+}

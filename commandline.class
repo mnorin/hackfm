@@ -1,0 +1,307 @@
+#!/bin/bash
+# commandline.class - Interactive command line for ba.sh TUI applications
+
+# Properties array
+__COMMANDLINE___properties=()
+
+__COMMANDLINE__.property(){
+    # Property indices
+    local row=0
+    local col=1
+    local width=2
+    local prompt=3
+    local text=4
+    local cursor_pos=5
+    local history_pos=6
+    
+    if [ "$2" = "=" ]; then
+        __COMMANDLINE___properties[$1]="$3"
+    else
+        echo "${__COMMANDLINE___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__COMMANDLINE__.row(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property row = "$2"
+    else
+        local val=$(__COMMANDLINE__.property row)
+        echo "${val:-24}"
+    fi
+}
+
+__COMMANDLINE__.col(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property col = "$2"
+    else
+        local val=$(__COMMANDLINE__.property col)
+        echo "${val:-1}"
+    fi
+}
+
+__COMMANDLINE__.width(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property width = "$2"
+    else
+        local val=$(__COMMANDLINE__.property width)
+        echo "${val:-80}"
+    fi
+}
+
+__COMMANDLINE__.prompt(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property prompt = "$2"
+    else
+        local val=$(__COMMANDLINE__.property prompt)
+        echo "${val:-\$ }"
+    fi
+}
+
+__COMMANDLINE__.text(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property text = "$2"
+    else
+        __COMMANDLINE__.property text
+    fi
+}
+
+__COMMANDLINE__.cursor_pos(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property cursor_pos = "$2"
+    else
+        local val=$(__COMMANDLINE__.property cursor_pos)
+        echo "${val:-0}"
+    fi
+}
+
+__COMMANDLINE__.history_pos(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property history_pos = "$2"
+    else
+        local val=$(__COMMANDLINE__.property history_pos)
+        echo "${val:--1}"
+    fi
+}
+
+# Command history array
+declare -ag __COMMANDLINE___history=()
+
+# Render the command line
+__COMMANDLINE__.render(){
+    local row=$(__COMMANDLINE__.row)
+    local col=$(__COMMANDLINE__.col)
+    local width=$(__COMMANDLINE__.width)
+    local prompt=$(__COMMANDLINE__.prompt)
+    local text=$(__COMMANDLINE__.text)
+    local cursor_pos=$(__COMMANDLINE__.cursor_pos)
+    
+    # Move to position
+    tui.cursor.move $row $col
+    
+    # Set colors (black background, white text)
+    tui.color.bg_black
+    tui.color.bright_white
+    
+    # Calculate available space for text
+    local prompt_len=${#prompt}
+    local text_width=$((width - prompt_len))
+    
+    # Print prompt
+    printf "%s" "$prompt"
+    
+    # Calculate visible portion of text (scroll if needed)
+    local visible_text="$text"
+    local display_cursor=$cursor_pos
+    
+    if [ ${#text} -gt $text_width ]; then
+        # Text is longer than available space - need to scroll
+        local scroll_offset=0
+        if [ $cursor_pos -ge $text_width ]; then
+            scroll_offset=$((cursor_pos - text_width + 1))
+        fi
+        visible_text="${text:$scroll_offset:$text_width}"
+        display_cursor=$((cursor_pos - scroll_offset))
+    fi
+    
+    # Print text and fill remaining space
+    printf "%-${text_width}s" "$visible_text"
+    
+    # Position cursor at the right place
+    tui.cursor.move $row $((col + prompt_len + display_cursor))
+    tui.cursor.show
+    
+    tui.color.reset
+}
+
+# Insert a character at cursor position
+__COMMANDLINE__.insert(){
+    local char="$1"
+    local text=$(__COMMANDLINE__.text)
+    local cursor_pos=$(__COMMANDLINE__.cursor_pos)
+    
+    # Insert character at cursor position
+    local before="${text:0:$cursor_pos}"
+    local after="${text:$cursor_pos}"
+    __COMMANDLINE__.text = "${before}${char}${after}"
+    
+    # Move cursor forward
+    __COMMANDLINE__.cursor_pos = $((cursor_pos + 1))
+    
+    __COMMANDLINE__.render
+}
+
+# Append a string at cursor position
+__COMMANDLINE__.append(){
+    local str="$1"
+    local text=$(__COMMANDLINE__.text)
+    local cursor_pos=$(__COMMANDLINE__.cursor_pos)
+    
+    # Insert string at cursor position
+    local before="${text:0:$cursor_pos}"
+    local after="${text:$cursor_pos}"
+    
+    # Add space before if needed
+    if [ -n "$before" ] && [ "${before: -1}" != " " ]; then
+        before="$before "
+    fi
+    
+    __COMMANDLINE__.text = "${before}${str}${after}"
+    
+    # Move cursor after inserted string
+    __COMMANDLINE__.cursor_pos = $((${#before} + ${#str}))
+    
+    __COMMANDLINE__.render
+}
+
+# Delete character before cursor (backspace)
+__COMMANDLINE__.delete(){
+    local text=$(__COMMANDLINE__.text)
+    local cursor_pos=$(__COMMANDLINE__.cursor_pos)
+    
+    if [ $cursor_pos -gt 0 ]; then
+        local before="${text:0:$((cursor_pos - 1))}"
+        local after="${text:$cursor_pos}"
+        __COMMANDLINE__.text = "${before}${after}"
+        __COMMANDLINE__.cursor_pos = $((cursor_pos - 1))
+        __COMMANDLINE__.render
+    fi
+}
+
+# Delete character at cursor (delete key)
+__COMMANDLINE__.delete_forward(){
+    local text=$(__COMMANDLINE__.text)
+    local cursor_pos=$(__COMMANDLINE__.cursor_pos)
+    
+    if [ $cursor_pos -lt ${#text} ]; then
+        local before="${text:0:$cursor_pos}"
+        local after="${text:$((cursor_pos + 1))}"
+        __COMMANDLINE__.text = "${before}${after}"
+        __COMMANDLINE__.render
+    fi
+}
+
+# Move cursor
+__COMMANDLINE__.move_cursor(){
+    local direction="$1"
+    local text=$(__COMMANDLINE__.text)
+    local cursor_pos=$(__COMMANDLINE__.cursor_pos)
+    
+    case "$direction" in
+        LEFT)
+            if [ $cursor_pos -gt 0 ]; then
+                __COMMANDLINE__.cursor_pos = $((cursor_pos - 1))
+                __COMMANDLINE__.render
+            fi
+            ;;
+        RIGHT)
+            if [ $cursor_pos -lt ${#text} ]; then
+                __COMMANDLINE__.cursor_pos = $((cursor_pos + 1))
+                __COMMANDLINE__.render
+            fi
+            ;;
+        HOME)
+            __COMMANDLINE__.cursor_pos = 0
+            __COMMANDLINE__.render
+            ;;
+        END)
+            __COMMANDLINE__.cursor_pos = ${#text}
+            __COMMANDLINE__.render
+            ;;
+    esac
+}
+
+# Navigate command history - previous
+__COMMANDLINE__.history_prev(){
+    local history_count=${#__COMMANDLINE___history[@]}
+    local history_pos=$(__COMMANDLINE__.history_pos)
+    
+    if [ $history_count -eq 0 ]; then
+        return
+    fi
+    
+    # First time pressing up - start from end of history
+    if [ $history_pos -eq -1 ]; then
+        history_pos=$history_count
+    fi
+    
+    if [ $history_pos -gt 0 ]; then
+        history_pos=$((history_pos - 1))
+        __COMMANDLINE__.history_pos = $history_pos
+        __COMMANDLINE__.text = "${__COMMANDLINE___history[$history_pos]}"
+        __COMMANDLINE__.cursor_pos = ${#__COMMANDLINE___history[$history_pos]}
+        __COMMANDLINE__.render
+    fi
+}
+
+# Navigate command history - next
+__COMMANDLINE__.history_next(){
+    local history_count=${#__COMMANDLINE___history[@]}
+    local history_pos=$(__COMMANDLINE__.history_pos)
+    
+    if [ $history_pos -eq -1 ]; then
+        return
+    fi
+    
+    if [ $history_pos -lt $((history_count - 1)) ]; then
+        history_pos=$((history_pos + 1))
+        __COMMANDLINE__.history_pos = $history_pos
+        __COMMANDLINE__.text = "${__COMMANDLINE___history[$history_pos]}"
+        __COMMANDLINE__.cursor_pos = ${#__COMMANDLINE___history[$history_pos]}
+        __COMMANDLINE__.render
+    else
+        # Past end of history - clear line
+        __COMMANDLINE__.history_pos = -1
+        __COMMANDLINE__.text = ""
+        __COMMANDLINE__.cursor_pos = 0
+        __COMMANDLINE__.render
+    fi
+}
+
+# Execute command and add to history
+__COMMANDLINE__.execute(){
+    local text=$(__COMMANDLINE__.text)
+    
+    # Add to history if not empty and different from last command
+    if [ -n "$text" ]; then
+        local last_cmd=""
+        if [ ${#__COMMANDLINE___history[@]} -gt 0 ]; then
+            last_cmd="${__COMMANDLINE___history[-1]}"
+        fi
+        
+        if [ "$text" != "$last_cmd" ]; then
+            __COMMANDLINE___history+=("$text")
+        fi
+    fi
+    
+    # Return the command text
+    echo "$text"
+}
+
+# Clear the command line
+__COMMANDLINE__.clear(){
+    __COMMANDLINE__.text = ""
+    __COMMANDLINE__.cursor_pos = 0
+    __COMMANDLINE__.history_pos = -1
+    __COMMANDLINE__.render
+}

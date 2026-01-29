@@ -1,0 +1,354 @@
+#!/bin/bash
+# textview.class - Scrollable text view component for ba.sh TUI applications
+# Used by viewer, editor, and command buffer
+
+__TEXTVIEW___properties=()
+
+__TEXTVIEW__.property(){
+    # Property indices
+    local row=0
+    local col=1
+    local width=2
+    local height=3
+    local scroll=4
+    local bg_color=5        # "black" or "blue"
+    local text_color=6      # ANSI color code or "bright_white"
+    local align_bottom=7    # 1=bottom-aligned, 0=top-aligned
+    
+    if [ "$2" = "=" ]; then
+        __TEXTVIEW___properties[$1]="$3"
+    else
+        echo "${__TEXTVIEW___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__TEXTVIEW__.row(){
+    if [ "$1" = "=" ]; then
+        __TEXTVIEW__.property row = "$2"
+    else
+        local val=$(__TEXTVIEW__.property row)
+        echo "${val:-2}"
+    fi
+}
+
+__TEXTVIEW__.col(){
+    if [ "$1" = "=" ]; then
+        __TEXTVIEW__.property col = "$2"
+    else
+        local val=$(__TEXTVIEW__.property col)
+        echo "${val:-1}"
+    fi
+}
+
+__TEXTVIEW__.width(){
+    if [ "$1" = "=" ]; then
+        __TEXTVIEW__.property width = "$2"
+    else
+        local val=$(__TEXTVIEW__.property width)
+        echo "${val:-80}"
+    fi
+}
+
+__TEXTVIEW__.height(){
+    if [ "$1" = "=" ]; then
+        __TEXTVIEW__.property height = "$2"
+    else
+        local val=$(__TEXTVIEW__.property height)
+        echo "${val:-20}"
+    fi
+}
+
+__TEXTVIEW__.scroll(){
+    if [ "$1" = "=" ]; then
+        __TEXTVIEW__.property scroll = "$2"
+    else
+        local val=$(__TEXTVIEW__.property scroll)
+        echo "${val:-0}"
+    fi
+}
+
+__TEXTVIEW__.bg_color(){
+    if [ "$1" = "=" ]; then
+        __TEXTVIEW__.property bg_color = "$2"
+    else
+        local val=$(__TEXTVIEW__.property bg_color)
+        echo "${val:-black}"
+    fi
+}
+
+__TEXTVIEW__.text_color(){
+    if [ "$1" = "=" ]; then
+        __TEXTVIEW__.property text_color = "$2"
+    else
+        local val=$(__TEXTVIEW__.property text_color)
+        echo "${val:-bright_white}"
+    fi
+}
+
+__TEXTVIEW__.align_bottom(){
+    if [ "$1" = "=" ]; then
+        __TEXTVIEW__.property align_bottom = "$2"
+    else
+        local val=$(__TEXTVIEW__.property align_bottom)
+        echo "${val:-0}"
+    fi
+}
+
+# Lines array (dynamically created per instance)
+
+# Get line count
+__TEXTVIEW__.line_count(){
+    echo ${#__TEXTVIEW___lines[@]}
+}
+
+# Clear all lines
+__TEXTVIEW__.clear(){
+    __TEXTVIEW___lines=()
+    __TEXTVIEW__.scroll = 0
+}
+
+# Load lines from file
+__TEXTVIEW__.load_from_file(){
+    local filepath="$1"
+    
+    __TEXTVIEW___lines=()
+    __TEXTVIEW__.scroll = 0
+    
+    if [ ! -f "$filepath" ]; then
+        return 1
+    fi
+    
+    while IFS= read -r line; do
+        # Strip carriage returns (for Windows CRLF files)
+        line="${line%$'\r'}"
+        
+        # Sanitize: replace control chars (0-31 except tab, and 127) with dots
+        line=$(echo "$line" | tr '\000-\010\013-\037\177' '.')
+        
+        __TEXTVIEW___lines+=("$line")
+    done < "$filepath"
+    
+    return 0
+}
+
+# Append a single line (for command buffer)
+__TEXTVIEW__.append_line(){
+    local line="$1"
+    __TEXTVIEW___lines+=("$line")
+}
+
+# Append multiple lines from string (split by newlines)
+__TEXTVIEW__.append_text(){
+    local text="$1"
+    while IFS= read -r line; do
+        __TEXTVIEW___lines+=("$line")
+    done <<< "$text"
+}
+
+# Get a specific line by index
+__TEXTVIEW__.get_line(){
+    local index=$1
+    echo "${__TEXTVIEW___lines[$index]}"
+}
+
+# Set a specific line by index (for editor)
+__TEXTVIEW__.set_line(){
+    local index=$1
+    local line="$2"
+    __TEXTVIEW___lines[$index]="$line"
+}
+
+# Scroll the view
+__TEXTVIEW__.scroll_view(){
+    local direction="$1"
+    local height=$(__TEXTVIEW__.height)
+    local total_lines=${#__TEXTVIEW___lines[@]}
+    local scroll=$(__TEXTVIEW__.scroll)
+    local align_bottom=$(__TEXTVIEW__.align_bottom)
+    
+    # For bottom-aligned: scroll=0 means show bottom, positive=scroll up
+    # For top-aligned: scroll=0 means show top, positive=scroll down
+    
+    local max_scroll
+    if [ $align_bottom -eq 1 ]; then
+        # Bottom-aligned: max_scroll is total_lines - height
+        max_scroll=$((total_lines - height))
+    else
+        # Top-aligned: max_scroll is total_lines - height
+        max_scroll=$((total_lines - height))
+    fi
+    
+    if [ $max_scroll -lt 0 ]; then
+        max_scroll=0
+    fi
+    
+    case "$direction" in
+        UP)
+            if [ $align_bottom -eq 1 ]; then
+                # Bottom-aligned: UP = see older (scroll up)
+                scroll=$((scroll + 1))
+                if [ $scroll -gt $max_scroll ]; then
+                    scroll=$max_scroll
+                fi
+            else
+                # Top-aligned: UP = scroll up
+                scroll=$((scroll - 1))
+                if [ $scroll -lt 0 ]; then
+                    scroll=0
+                fi
+            fi
+            ;;
+        DOWN)
+            if [ $align_bottom -eq 1 ]; then
+                # Bottom-aligned: DOWN = see newer (scroll down)
+                scroll=$((scroll - 1))
+                if [ $scroll -lt 0 ]; then
+                    scroll=0
+                fi
+            else
+                # Top-aligned: DOWN = scroll down
+                scroll=$((scroll + 1))
+                if [ $scroll -gt $max_scroll ]; then
+                    scroll=$max_scroll
+                fi
+            fi
+            ;;
+        PAGEUP)
+            if [ $align_bottom -eq 1 ]; then
+                scroll=$((scroll + height))
+                if [ $scroll -gt $max_scroll ]; then
+                    scroll=$max_scroll
+                fi
+            else
+                scroll=$((scroll - height))
+                if [ $scroll -lt 0 ]; then
+                    scroll=0
+                fi
+            fi
+            ;;
+        PAGEDOWN)
+            if [ $align_bottom -eq 1 ]; then
+                scroll=$((scroll - height))
+                if [ $scroll -lt 0 ]; then
+                    scroll=0
+                fi
+            else
+                scroll=$((scroll + height))
+                if [ $scroll -gt $max_scroll ]; then
+                    scroll=$max_scroll
+                fi
+            fi
+            ;;
+        HOME)
+            if [ $align_bottom -eq 1 ]; then
+                # Bottom-aligned: HOME = go to top (oldest)
+                scroll=$max_scroll
+            else
+                # Top-aligned: HOME = go to top
+                scroll=0
+            fi
+            ;;
+        END)
+            if [ $align_bottom -eq 1 ]; then
+                # Bottom-aligned: END = go to bottom (newest)
+                scroll=0
+            else
+                # Top-aligned: END = go to bottom
+                scroll=$max_scroll
+            fi
+            ;;
+    esac
+    
+    __TEXTVIEW__.scroll = $scroll
+}
+
+# Render the text view
+__TEXTVIEW__.render(){
+    local row=$(__TEXTVIEW__.row)
+    local col=$(__TEXTVIEW__.col)
+    local width=$(__TEXTVIEW__.width)
+    local height=$(__TEXTVIEW__.height)
+    local scroll=$(__TEXTVIEW__.scroll)
+    local bg_color=$(__TEXTVIEW__.bg_color)
+    local text_color=$(__TEXTVIEW__.text_color)
+    local align_bottom=$(__TEXTVIEW__.align_bottom)
+    
+    local total_lines=${#__TEXTVIEW___lines[@]}
+    
+    # Fill background
+    if [ "$bg_color" = "blue" ]; then
+        tui.color.bg_blue
+    else
+        tui.color.bg_black
+    fi
+    
+    for ((r=0; r<height; r++)); do
+        tui.cursor.move $((row + r)) $col
+        printf "%${width}s" ""
+    done
+    tui.color.reset
+    
+    # Calculate visible range
+    local visible_start
+    if [ $align_bottom -eq 1 ]; then
+        # Bottom-aligned: scroll=0 shows bottom
+        visible_start=$((total_lines - height + scroll))
+    else
+        # Top-aligned: scroll=0 shows top
+        visible_start=$scroll
+    fi
+    
+    # Don't scroll past boundaries
+    if [ $visible_start -lt 0 ]; then
+        visible_start=0
+    fi
+    
+    local visible_end=$((visible_start + height))
+    
+    # Calculate starting screen row (for bottom alignment)
+    local lines_to_draw=$((total_lines - visible_start))
+    if [ $lines_to_draw -gt $height ]; then
+        lines_to_draw=$height
+    fi
+    
+    local screen_row
+    if [ $align_bottom -eq 1 ] && [ $total_lines -lt $height ]; then
+        # Bottom-align when we have fewer lines than height
+        screen_row=$((row + height - lines_to_draw))
+    else
+        screen_row=$row
+    fi
+    
+    # Draw lines
+    for ((i=visible_start; i<visible_end && i<total_lines; i++)); do
+        tui.cursor.move $screen_row $col
+        
+        # Set colors
+        if [ "$bg_color" = "blue" ]; then
+            tui.color.bg_blue
+        else
+            tui.color.bg_black
+        fi
+        
+        # Set text color
+        case "$text_color" in
+            bright_white) tui.color.bright_white ;;
+            white) tui.color.white ;;
+            green) tui.color.green ;;
+            cyan) tui.color.cyan ;;
+            yellow) tui.color.yellow ;;
+            *) tui.color.bright_white ;;
+        esac
+        
+        # Get and truncate line
+        local line="${__TEXTVIEW___lines[$i]}"
+        if [ ${#line} -gt $width ]; then
+            line="${line:0:$width}"
+        fi
+        
+        printf "%-${width}s" "$line"
+        tui.color.reset
+        ((screen_row++))
+    done
+}

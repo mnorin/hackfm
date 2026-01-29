@@ -1,0 +1,192 @@
+#!/bin/bash
+# viewer.class - File viewer using ba.sh
+
+# Load dependencies
+. "$HACKFM_DIR/appframe.h"
+
+__VIEWER___properties=()
+
+__VIEWER__.property(){
+    # Property indices
+    local filepath=0
+    local scroll=1
+    local appframe_created=2
+    
+    if [ "$2" = "=" ]; then
+        __VIEWER___properties[$1]="$3"
+    else
+        echo "${__VIEWER___properties[$1]}"
+    fi
+}
+
+# Property accessors
+__VIEWER__.filepath(){
+    if [ "$1" = "=" ]; then
+        __VIEWER__.property filepath = "$2"
+    else
+        __VIEWER__.property filepath
+    fi
+}
+
+__VIEWER__.scroll(){
+    if [ "$1" = "=" ]; then
+        __VIEWER__.property scroll = "$2"
+    else
+        __VIEWER__.property scroll
+    fi
+}
+
+__VIEWER__.appframe_created(){
+    if [ "$1" = "=" ]; then
+        __VIEWER__.property appframe_created = "$2"
+    else
+        local val=$(__VIEWER__.property appframe_created)
+        echo "${val:-0}"
+    fi
+}
+
+# File lines array
+declare -ag __VIEWER___lines=()
+
+# Load file
+__VIEWER__.load(){
+    local filepath="$1"
+    
+    __VIEWER__.filepath = "$filepath"
+    __VIEWER___lines=()
+    __VIEWER__.scroll = 0
+    
+    # Read file
+    while IFS= read -r line; do
+        # Strip carriage returns (for Windows CRLF files)
+        line="${line%$'\r'}"
+        
+        # Sanitize: replace control chars (0-31 except tab, and 127) with dots
+        # This prevents escape sequences and other control chars from breaking the UI
+        line=$(echo "$line" | tr '\000-\010\013-\037\177' '.')
+        
+        __VIEWER___lines+=("$line")
+    done < "$filepath"
+}
+
+# Show viewer (blocking - runs until user exits)
+__VIEWER__.show(){
+    local filepath=$(__VIEWER__.filepath)
+    local filename=$(basename "$filepath")
+    
+    # Check if file is loaded
+    if [ -z "$filepath" ]; then
+        return 1
+    fi
+    
+    # Create appframe if not already created
+    local appframe_created=$(__VIEWER__.appframe_created)
+    if [ $appframe_created -eq 0 ]; then
+        appframe __VIEWER___appframe
+        __VIEWER__.appframe_created = 1
+    fi
+    
+    # Configure appframe
+    __VIEWER___appframe.title = " File: $filename"
+    __VIEWER___appframe.show_cursor = 0
+    
+    # Setup
+    __VIEWER___appframe.setup
+    
+    # Get dimensions
+    local rows=$(__VIEWER___appframe.rows)
+    local cols=$(__VIEWER___appframe.cols)
+    local content_height=$(__VIEWER___appframe.main_height)
+    
+    # Empty file check
+    if [ ${#__VIEWER___lines[@]} -eq 0 ]; then
+        # Draw frame with blue background
+        __VIEWER___appframe.draw_frame_blue "Help" "" "Quit" "" "" "" "" "" "" "Quit"
+        
+        tui.cursor.move 3 1
+        tui.color.bg_blue
+        tui.color.white
+        echo "<empty file>"
+        tui.color.reset
+    fi
+    
+    # Viewer loop
+    local scroll=$(__VIEWER__.scroll)
+    local max_rows=$content_height
+    
+    while true; do
+        # Update title with line info
+        local total_lines=${#__VIEWER___lines[@]}
+        local current_line=$((scroll + 1))
+        __VIEWER___appframe.title = " File: $filename | Line $current_line/$total_lines"
+        
+        # Draw frame with blue background (title + blue + fkeys)
+        __VIEWER___appframe.draw_frame_blue "Help" "" "Quit" "" "" "" "" "" "" "Quit"
+        
+        # Display content with blue background
+        local row=2
+        for ((i=scroll; i<scroll+max_rows && i<${#__VIEWER___lines[@]}; i++)); do
+            tui.cursor.move $row 1
+            
+            # Blue background for content area
+            tui.color.bg_blue
+            tui.color.bright_white
+            
+            # Truncate long lines
+            local display_line="${__VIEWER___lines[$i]}"
+            local max_len=$cols
+            if [ ${#display_line} -gt $max_len ]; then
+                display_line="${display_line:0:$max_len}..."
+            fi
+            
+            printf "%-${max_len}s" "$display_line"
+            tui.color.reset
+            ((row++)) || true
+        done
+        
+        # Input
+        local key=$(tui.input.key)
+        
+        case "$key" in
+            UP)
+                [ $scroll -gt 0 ] && ((scroll--))
+                ;;
+            DOWN)
+                [ $scroll -lt $((${#__VIEWER___lines[@]} - max_rows)) ] && ((scroll++)) || true
+                ;;
+            PAGEUP)
+                scroll=$((scroll - max_rows))
+                [ $scroll -lt 0 ] && scroll=0
+                ;;
+            PAGEDOWN)
+                scroll=$((scroll + max_rows))
+                local max_scroll=$((${#__VIEWER___lines[@]} - max_rows))
+                [ $max_scroll -lt 0 ] && max_scroll=0
+                [ $scroll -gt $max_scroll ] && scroll=$max_scroll
+                ;;
+            HOME)
+                scroll=0
+                ;;
+            END)
+                scroll=$((${#__VIEWER___lines[@]} - max_rows))
+                [ $scroll -lt 0 ] && scroll=0
+                ;;
+            q|Q|F3|F10)
+                break
+                ;;
+        esac
+    done
+    
+    # Save scroll position
+    __VIEWER__.scroll = $scroll
+    
+    # Cleanup
+    __VIEWER___appframe.cleanup
+}
+
+# Open file (convenience method that loads and shows)
+__VIEWER__.open(){
+    local filepath="$1"
+    __VIEWER__.load "$filepath"
+    __VIEWER__.show
+}
