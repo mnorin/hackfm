@@ -419,6 +419,18 @@ __ARCHIVELIST__.navigate(){
     esac
 }
 
+# Cleanup - clear all arrays to free memory
+__ARCHIVELIST__.cleanup(){
+    __ARCHIVELIST___all_entries=()
+    __ARCHIVELIST___files=()
+    __ARCHIVELIST___types=()
+    __ARCHIVELIST___sizes=()
+    __ARCHIVELIST___times=()
+    __ARCHIVELIST___full_paths=()
+    __ARCHIVELIST__.selected = 0
+    __ARCHIVELIST__.scroll = 0
+}
+
 # Check if special entry
 __ARCHIVELIST__.is_special(){
     local filename="$1"

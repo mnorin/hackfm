@@ -706,18 +706,12 @@ __PANEL__._exit_archive(){
     local archive_dir="${saved_archive_path%/*}"
     local archive_file="${saved_archive_path##*/}"
     
-    # Clear archive arrays before switching back
+    # Get archive list before switching
     local archive_list=$(__PANEL__.list_source)
+    
+    # Tell archivelist to clean up
     if [ "$archive_list" != "__PANEL__.list" ]; then
-        # Sanitize name (replace dots with underscores)
-        local sanitized="${archive_list//./_}"
-        # Clear all archive arrays to free memory
-        eval "${sanitized}_all_entries=()"
-        eval "${sanitized}_files=()"
-        eval "${sanitized}_types=()"
-        eval "${sanitized}_sizes=()"
-        eval "${sanitized}_times=()"
-        eval "${sanitized}_full_paths=()"
+        $archive_list.cleanup
     fi
     
     # Switch back to filelist
