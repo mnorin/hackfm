@@ -706,6 +706,14 @@ __PANEL__._exit_archive(){
     local archive_dir="${saved_archive_path%/*}"
     local archive_file="${saved_archive_path##*/}"
     
+    # Get archive list before switching
+    local archive_list=$(__PANEL__.list_source)
+    
+    # Tell archivelist to clean up
+    if [ "$archive_list" != "__PANEL__.list" ]; then
+        $archive_list.cleanup
+    fi
+    
     # Switch back to filelist
     __PANEL__.list_source = "__PANEL__.list"
     
@@ -754,7 +762,21 @@ __PANEL__.enter(){
     if [ "$in_archive" = "1" ]; then
         if [ "$filetype" = "d" ]; then
             local list=$(__PANEL__.list_source)
+            
             $list.enter
+            
+            # If we went up (..), adjust scroll properly
+            if [ "$filename" = ".." ]; then
+                # Get the now-selected item (directory we just left)
+                local selected_info
+                IFS='|' read -r selected_filename selected_type selected_path <<< "$($list.get_selected_item)"
+                
+                # Adjust scroll using panel's actual height
+                local height=$(__PANEL__.height)
+                local visible_rows=$((height - 3))
+                $list.find_and_select "$selected_filename" $visible_rows
+            fi
+            
             __PANEL__.prerender_all_rows
             __PANEL__.render
             __PANEL__.enter_result = "ok"

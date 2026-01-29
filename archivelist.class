@@ -105,7 +105,6 @@ __ARCHIVELIST__._load_full_archive(){
     local archive_path=$(__ARCHIVELIST__.archive_path)
     local archive_type=$(__ARCHIVELIST__.archive_type)
     
-    echo "DEBUG: _load_full_archive called, archive_path=$archive_path, archive_type=$archive_type" >&2
     
     __ARCHIVELIST___all_entries=()
     
@@ -128,12 +127,34 @@ __ARCHIVELIST__._load_full_archive(){
             done < <(tar -tvf "$archive_path" 2>/dev/null)
             ;;
         zip)
+            # ZIP files may have extra info/text before the file list
+            # Look for separator line (dashes) to find the start of file listing
+            local in_listing=0
             while IFS= read -r line; do
+                # Find separator line with dashes
+                if [[ "$line" =~ ^-{5,} ]]; then
+                    if [ $in_listing -eq 0 ]; then
+                        # First separator - file listing starts after this
+                        in_listing=1
+                        continue
+                    else
+                        # Second separator - end of listing
+                        break
+                    fi
+                fi
+                
+                # Skip until we're in the listing
+                [ $in_listing -eq 0 ] && continue
+                
+                # Skip lines with less than 4 fields
                 local field_count=$(echo "$line" | awk '{print NF}')
                 [ "$field_count" -lt 4 ] && continue
                 
                 local size=$(echo "$line" | awk '{print $1}')
                 local filename=$(echo "$line" | awk '{$1=$2=$3=""; sub(/^[ \t]+/, ""); print}')
+                
+                # Skip if size is not numeric
+                [[ ! "$size" =~ ^[0-9]+$ ]] && continue
                 
                 local size_str=""
                 if [ "$size" -lt 1024 ]; then
@@ -145,7 +166,7 @@ __ARCHIVELIST__._load_full_archive(){
                 fi
                 
                 [ -n "$filename" ] && __ARCHIVELIST___all_entries+=("$filename|$size_str")
-            done < <(unzip -l "$archive_path" 2>/dev/null | tail -n +4 | head -n -2)
+            done < <(unzip -l "$archive_path" 2>/dev/null)
             ;;
         rar)
             while IFS= read -r line; do
@@ -153,7 +174,6 @@ __ARCHIVELIST__._load_full_archive(){
             done < <(unrar lb "$archive_path" 2>/dev/null)
             ;;
         7z)
-            echo "DEBUG: Entering 7z case" >&2
             local cmd=""
             if command -v 7z >/dev/null 2>&1; then
                 cmd="7z"
@@ -163,7 +183,6 @@ __ARCHIVELIST__._load_full_archive(){
                 cmd="7zr"
             fi
             
-            echo "DEBUG: cmd=$cmd, archive_path=$archive_path" >&2
             
             if [ -n "$cmd" ]; then
                 local separator_line=""
@@ -174,13 +193,8 @@ __ARCHIVELIST__._load_full_archive(){
                 while IFS= read -r line; do
                     ((line_count++))
                     
-                    if [ $line_count -le 25 ]; then
-                        echo "DEBUG: Line $line_count: [$line]" >&2
-                    fi
-                    
                     # Find separator line with dashes
                     if [[ "$line" =~ ^-{10,} ]]; then
-                        echo "DEBUG: Found separator at line $line_count" >&2
                         if [ $in_listing -eq 0 ]; then
                             # First separator - save it to find filename position
                             separator_line="$line"
@@ -188,14 +202,10 @@ __ARCHIVELIST__._load_full_archive(){
                             local temp="${separator_line% -*}"
                             filename_pos=${#temp}
                             ((filename_pos++))
-                            echo "DEBUG: separator_line=[$separator_line]" >&2
-                            echo "DEBUG: temp=[$temp]" >&2
-                            echo "DEBUG: filename_pos=$filename_pos" >&2
                             in_listing=1
                             continue
                         else
                             # Second separator - end of listing
-                            echo "DEBUG: Second separator, breaking" >&2
                             break
                         fi
                     fi
@@ -207,7 +217,6 @@ __ARCHIVELIST__._load_full_archive(){
                     
                     # Skip empty lines (can appear between separator and files)
                     if [[ -z "$line" ]]; then
-                        echo "DEBUG: Skipping empty line" >&2
                         continue
                     fi
                     
@@ -218,9 +227,6 @@ __ARCHIVELIST__._load_full_archive(){
                     local attr=$(echo "$line" | awk '{print $3}')
                     local size=$(echo "$line" | awk '{print $4}')
                     
-                    if [ $line_count -le 25 ]; then
-                        echo "DEBUG: Extracted filename=[$filename] attr=[$attr] size=[$size]" >&2
-                    fi
                     
                     [[ -z "$filename" ]] && continue
                     
@@ -249,12 +255,8 @@ __ARCHIVELIST__._load_full_archive(){
                     
                     __ARCHIVELIST___all_entries+=("$filename|$size_str")
                     
-                    if [ $line_count -le 25 ]; then
-                        echo "DEBUG: Added entry: $filename|$size_str" >&2
-                    fi
                 done < <($cmd l "$archive_path" 2>/dev/null)
                 
-                echo "DEBUG: Total entries loaded: ${#__ARCHIVELIST___all_entries[@]}" >&2
             fi
             ;;
     esac
@@ -316,7 +318,6 @@ __ARCHIVELIST__._filter_by_path(){
 
 # Load (or filter) archive contents at current internal path
 __ARCHIVELIST__.load(){
-    echo "DEBUG: load() called, all_entries count=${#__ARCHIVELIST___all_entries[@]}" >&2
     
     # Clear display arrays
     __ARCHIVELIST___files=()
@@ -329,7 +330,6 @@ __ARCHIVELIST__.load(){
     
     # Load full archive if not already loaded
     if [ ${#__ARCHIVELIST___all_entries[@]} -eq 0 ]; then
-        echo "DEBUG: Calling _load_full_archive" >&2
         __ARCHIVELIST__._load_full_archive
     fi
     
@@ -366,20 +366,22 @@ __ARCHIVELIST__.navigate(){
     case "$direction" in
         UP)
             if [ $selected -gt 0 ]; then
-                __ARCHIVELIST__.selected = $((selected - 1))
+                local new_selected=$((selected - 1))
+                __ARCHIVELIST__.selected = $new_selected
                 
                 local scroll=$(__ARCHIVELIST__.scroll)
-                if [ $selected -lt $scroll ]; then
-                    __ARCHIVELIST__.scroll = $selected
+                if [ $new_selected -lt $scroll ]; then
+                    __ARCHIVELIST__.scroll = $new_selected
                 fi
             fi
             ;;
         DOWN)
             if [ $selected -lt $((count - 1)) ]; then
-                __ARCHIVELIST__.selected = $((selected + 1))
+                local new_selected=$((selected + 1))
+                __ARCHIVELIST__.selected = $new_selected
                 
                 local scroll=$(__ARCHIVELIST__.scroll)
-                if [ $selected -ge $((scroll + max_visible)) ]; then
+                if [ $new_selected -ge $((scroll + max_visible)) ]; then
                     __ARCHIVELIST__.scroll = $((scroll + 1))
                 fi
             fi
@@ -417,6 +419,18 @@ __ARCHIVELIST__.navigate(){
     esac
 }
 
+# Cleanup - clear all arrays to free memory
+__ARCHIVELIST__.cleanup(){
+    __ARCHIVELIST___all_entries=()
+    __ARCHIVELIST___files=()
+    __ARCHIVELIST___types=()
+    __ARCHIVELIST___sizes=()
+    __ARCHIVELIST___times=()
+    __ARCHIVELIST___full_paths=()
+    __ARCHIVELIST__.selected = 0
+    __ARCHIVELIST__.scroll = 0
+}
+
 # Check if special entry
 __ARCHIVELIST__.is_special(){
     local filename="$1"
@@ -443,15 +457,10 @@ __ARCHIVELIST__.enter(){
         __ARCHIVELIST__.internal_path = "$parent"
         __ARCHIVELIST__.load
         
-        # Find and select the directory we just left
+        # Find and select the directory we just left (with scroll adjustment)
         if [ -n "$leaving_dir" ]; then
-            local count=${#__ARCHIVELIST___files[@]}
-            for ((i=0; i<count; i++)); do
-                if [ "${__ARCHIVELIST___files[$i]}" = "$leaving_dir" ]; then
-                    __ARCHIVELIST__.selected = $i
-                    break
-                fi
-            done
+            # Get max_visible from panel height (estimate 20 if unknown)
+            __ARCHIVELIST__.find_and_select "$leaving_dir" 20
         fi
     elif [ "$filetype" = "d" ]; then
         # Enter subdirectory
@@ -481,7 +490,43 @@ __ARCHIVELIST__.get_selected_item(){
 __ARCHIVELIST__.count_selected(){ echo 0; }
 __ARCHIVELIST__.toggle_selection(){ :; }
 __ARCHIVELIST__.selection_info(){ echo "0|0"; }
-__ARCHIVELIST__.find_and_select(){ :; }
+__ARCHIVELIST__.find_and_select(){
+    local target_name="$1"
+    local max_visible="${2:-20}"
+    
+    local count=${#__ARCHIVELIST___files[@]}
+    
+    # Search for the item
+    for ((i=0; i<count; i++)); do
+        if [ "${__ARCHIVELIST___files[$i]}" = "$target_name" ]; then
+            # Found it - select and adjust scroll
+            __ARCHIVELIST__.selected = $i
+            
+            # Adjust scroll to make it visible
+            local scroll=$(__ARCHIVELIST__.scroll)
+            if [ $i -lt $scroll ]; then
+                scroll=$i
+            elif [ $i -ge $((scroll + max_visible)) ]; then
+                scroll=$((i - max_visible + 1))
+            fi
+            
+            # Clamp scroll to prevent empty rows at bottom
+            local max_scroll=$((count - max_visible))
+            if [ $max_scroll -lt 0 ]; then
+                max_scroll=0
+            fi
+            if [ $scroll -gt $max_scroll ]; then
+                scroll=$max_scroll
+            fi
+            
+            __ARCHIVELIST__.scroll = $scroll
+            return 0
+        fi
+    done
+    
+    # Not found - leave selection as is
+    return 1
+}
 __ARCHIVELIST__.render_row(){ echo ""; }
 __ARCHIVELIST__.sort_order(){ echo "name_asc"; }
 __ARCHIVELIST__.marked_size(){ echo 0; }
