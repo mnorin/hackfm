@@ -1,0 +1,41 @@
+#!/bin/bash
+# region.class - Terminal scroll region management
+
+# Set scroll region (top and bottom line numbers, 1-based)
+tui.region.set(){
+    local top=$1
+    local bottom=$2
+    printf '\033[%d;%dr' "$top" "$bottom"
+}
+
+# Reset scroll region to full screen
+tui.region.reset(){
+    printf '\033[r'
+}
+
+# Scroll region up by one line (content moves up, blank line appears at bottom)
+tui.region.scroll_up(){
+    printf '\033D'
+}
+
+# Scroll region down by one line (content moves down, blank line appears at top)
+tui.region.scroll_down(){
+    printf '\033M'
+}
+
+# Scroll region up by N lines
+tui.region.scroll_up_n(){
+    local n=$1
+    for ((i=0; i<n; i++)); do
+        printf '\033D'
+    done
+}
+
+# Scroll region down by N lines
+tui.region.scroll_down_n(){
+    local n=$1
+    for ((i=0; i<n; i++)); do
+        printf '\033M'
+    done
+}
+
