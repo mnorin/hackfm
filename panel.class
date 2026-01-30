@@ -635,8 +635,29 @@ __PANEL__.navigate(){
         __PANEL___rendered_rows[$new_selected]=$(__PANEL__.render_row_string $new_selected)
     fi
     
-    # If scroll changed, we need full redraw
-    if [ $old_scroll -ne $new_scroll ]; then
+    # Calculate scroll delta
+    local scroll_delta=$((new_scroll - old_scroll))
+    
+    # If scroll changed by exactly 1 line, redraw all visible rows at new positions
+    if [ $scroll_delta -eq 1 ] || [ $scroll_delta -eq -1 ]; then
+        local y=$(__PANEL__.y)
+        local x=$(__PANEL__.x)
+        
+        # Redraw all visible rows at their new positions
+        for ((i=0; i<max_visible; i++)); do
+            local file_idx=$((new_scroll + i))
+            local count=$($list.count)
+            
+            # Skip if beyond file list
+            [ $file_idx -ge $count ] && break
+            
+            # Draw row at screen position
+            tui.cursor.move $((y + 1 + i)) $((x + 1))
+            printf '%b' "${__PANEL___rendered_rows[$file_idx]}"
+        done
+        
+    elif [ $old_scroll -ne $new_scroll ]; then
+        # Scroll changed by more than 1 - need full redraw
         __PANEL__.render
     else
         # Scroll didn't change - just redraw the 2 affected visible rows
