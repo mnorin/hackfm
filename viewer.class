@@ -69,6 +69,29 @@ __VIEWER__.load(){
     done < "$filepath"
 }
 
+__VIEWER__.display_content(){
+        # Display content with blue background
+        local row=2
+        for ((i=scroll; i<scroll+max_rows && i<total_lines; i++)); do
+            tui.cursor.move $row 1
+            
+            # Blue background for content area
+            tui.color.bg_blue
+            tui.color.bright_white
+            
+            # Truncate long lines
+            local display_line="${__VIEWER___lines[$i]}"
+            local max_len=$cols
+            if [ ${#display_line} -gt $max_len ]; then
+                display_line="${display_line:0:$max_len}..."
+            fi
+            
+            printf "%-${max_len}s" "$display_line"
+            tui.color.reset
+            ((row++)) || true
+        done
+}
+
 # Show viewer (blocking - runs until user exits)
 __VIEWER__.show(){
     local filepath=$(__VIEWER__.filepath)
@@ -97,12 +120,12 @@ __VIEWER__.show(){
     local rows=$(__VIEWER___appframe.rows)
     local cols=$(__VIEWER___appframe.cols)
     local content_height=$(__VIEWER___appframe.main_height)
+    local total_lines=${#__VIEWER___lines[@]}
     
+    __VIEWER___appframe.draw_frame_blue "Help" "" "Quit" "" "" "" "" "" "" "Quit"
+
     # Empty file check
     if [ ${#__VIEWER___lines[@]} -eq 0 ]; then
-        # Draw frame with blue background
-        __VIEWER___appframe.draw_frame_blue "Help" "" "Quit" "" "" "" "" "" "" "Quit"
-        
         tui.cursor.move 3 1
         tui.color.bg_blue
         tui.color.white
@@ -114,45 +137,24 @@ __VIEWER__.show(){
     local scroll=$(__VIEWER__.scroll)
     local max_rows=$content_height
     
+    __VIEWER__.display_content
+
     while true; do
         # Update title with line info
-        local total_lines=${#__VIEWER___lines[@]}
         local current_line=$((scroll + 1))
         __VIEWER___appframe.title = " File: $filename | Line $current_line/$total_lines"
-        
-        # Draw frame with blue background (title + blue + fkeys)
-        __VIEWER___appframe.draw_frame_blue "Help" "" "Quit" "" "" "" "" "" "" "Quit"
-        
-        # Display content with blue background
-        local row=2
-        for ((i=scroll; i<scroll+max_rows && i<${#__VIEWER___lines[@]}; i++)); do
-            tui.cursor.move $row 1
-            
-            # Blue background for content area
-            tui.color.bg_blue
-            tui.color.bright_white
-            
-            # Truncate long lines
-            local display_line="${__VIEWER___lines[$i]}"
-            local max_len=$cols
-            if [ ${#display_line} -gt $max_len ]; then
-                display_line="${display_line:0:$max_len}..."
-            fi
-            
-            printf "%-${max_len}s" "$display_line"
-            tui.color.reset
-            ((row++)) || true
-        done
+        __VIEWER___appframe.draw_title
         
         # Input
         local key=$(tui.input.key)
+        local old_scroll=$scroll
         
         case "$key" in
             UP)
                 [ $scroll -gt 0 ] && ((scroll--))
                 ;;
             DOWN)
-                [ $scroll -lt $((${#__VIEWER___lines[@]} - max_rows)) ] && ((scroll++)) || true
+                [ $scroll -lt $((total_lines - max_rows)) ] && ((scroll++)) || true
                 ;;
             PAGEUP)
                 scroll=$((scroll - max_rows))
@@ -160,7 +162,7 @@ __VIEWER__.show(){
                 ;;
             PAGEDOWN)
                 scroll=$((scroll + max_rows))
-                local max_scroll=$((${#__VIEWER___lines[@]} - max_rows))
+                local max_scroll=$((total_lines - max_rows))
                 [ $max_scroll -lt 0 ] && max_scroll=0
                 [ $scroll -gt $max_scroll ] && scroll=$max_scroll
                 ;;
@@ -168,20 +170,82 @@ __VIEWER__.show(){
                 scroll=0
                 ;;
             END)
-                scroll=$((${#__VIEWER___lines[@]} - max_rows))
+                scroll=$((total_lines - max_rows))
                 [ $scroll -lt 0 ] && scroll=0
                 ;;
             q|Q|F3|F10)
                 break
                 ;;
         esac
+        
+        # Optimize redraw for single-line scroll
+        local scroll_delta=$((scroll - old_scroll))
+        
+        if [ $scroll_delta -eq 1 ]; then
+            # Scrolled DOWN by 1 - use scroll region
+            tui.cursor.hide
+            
+            # Set scroll region (content area: rows 2 to rows-1)
+            local region_bottom=$((rows - 1))
+            tui.region.set 2 $region_bottom
+            
+            # Move to bottom and scroll up (content moves up)
+            tui.cursor.move $region_bottom 1
+            tui.region.scroll_up
+            
+            # Draw new bottom line
+            local new_line_idx=$((scroll + max_rows - 1))
+            if [ $new_line_idx -lt $total_lines ]; then
+                tui.cursor.move $region_bottom 1
+                tui.color.bg_blue
+                tui.color.bright_white
+                local display_line="${__VIEWER___lines[$new_line_idx]}"
+                if [ ${#display_line} -gt $cols ]; then
+                    display_line="${display_line:0:$cols}..."
+                fi
+                printf "%-${cols}s" "$display_line"
+                tui.color.reset
+            fi
+            
+            # Reset scroll region
+            tui.region.reset
+            
+        elif [ $scroll_delta -eq -1 ]; then
+            # Scrolled UP by 1 - use scroll region
+            tui.cursor.hide
+            
+            # Set scroll region (content area: rows 2 to rows-1)
+            local region_bottom=$((rows - 1))
+            tui.region.set 2 $region_bottom
+            
+            # Move to top and scroll down (content moves down)
+            tui.cursor.move 2 1
+            tui.region.scroll_down
+            
+            # Draw new top line
+            tui.cursor.move 2 1
+            tui.color.bg_blue
+            tui.color.bright_white
+            local display_line="${__VIEWER___lines[$scroll]}"
+            if [ ${#display_line} -gt $cols ]; then
+                display_line="${display_line:0:$cols}..."
+            fi
+            printf "%-${cols}s" "$display_line"
+            tui.color.reset
+            
+            # Reset scroll region
+            tui.region.reset
+            
+        elif [ $scroll_delta -ne 0 ]; then
+            __VIEWER__.display_content
+        fi
     done
     
     # Save scroll position
     __VIEWER__.scroll = $scroll
     
     # Cleanup
-    __VIEWER___appframe.cleanup
+    # __VIEWER___appframe.cleanup
 }
 
 # Open file (convenience method that loads and shows)
