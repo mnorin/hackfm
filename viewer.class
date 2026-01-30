@@ -237,7 +237,6 @@ __VIEWER__.show(){
             tui.region.reset
             
         elif [ $scroll_delta -ne 0 ]; then
-            # Scroll changed by more than 1 - need full redraw (will happen next iteration)
             __VIEWER__.display_content
         fi
     done
