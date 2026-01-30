@@ -626,7 +626,10 @@ __PANEL__.navigate(){
     if [ $old_selected -ne $new_selected ]; then
         __PANEL___rendered_rows[$old_selected]=$(__PANEL__.render_row_string $old_selected)
         __PANEL___rendered_rows[$new_selected]=$(__PANEL__.render_row_string $new_selected)
+        # Render panel to update display
+        __PANEL__.render
     fi
+    # If cursor didn't move, don't render anything
 }
 
 # Get selected item info

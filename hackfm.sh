@@ -1580,7 +1580,6 @@ main_loop() {
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     # In File Manager workspace - always navigate files
                     navigate UP
-                    $(get_active_panel).render
                 else
                     # In buffer mode - navigate command history
                     cmd.history_prev
@@ -1592,7 +1591,6 @@ main_loop() {
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     # In File Manager workspace - always navigate files
                     navigate DOWN
-                    $(get_active_panel).render
                 else
                     # In buffer mode - navigate command history
                     cmd.history_next
@@ -1603,14 +1601,12 @@ main_loop() {
             PAGEUP)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     navigate PAGEUP
-                    $(get_active_panel).render
                 fi
                 ;;
                 
             PAGEDOWN)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     navigate PAGEDOWN
-                    $(get_active_panel).render
                 fi
                 ;;
                 
