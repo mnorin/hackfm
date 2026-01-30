@@ -640,6 +640,9 @@ __PANEL__.navigate(){
     
     # If scroll changed by exactly 1 line, redraw all visible rows at new positions
     if [ $scroll_delta -eq 1 ] || [ $scroll_delta -eq -1 ]; then
+        # Hide cursor during redraw
+        tui.cursor.hide
+        
         local y=$(__PANEL__.y)
         local x=$(__PANEL__.x)
         
@@ -661,6 +664,8 @@ __PANEL__.navigate(){
         __PANEL__.render
     else
         # Scroll didn't change - just redraw the 2 affected visible rows
+        tui.cursor.hide
+        
         local y=$(__PANEL__.y)
         local x=$(__PANEL__.x)
         local width=$(__PANEL__.width)
