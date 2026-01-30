@@ -35,7 +35,7 @@ resize_handler() {
     local rows=$(main_frame.rows)
     local cols=$(main_frame.cols)
     local main_height=$(main_frame.main_height)
-    local panel_width=$(((cols - 3) / 2))
+    local panel_width=$((cols / 2 - 1))
     local panel_height=$((main_height - 3))
     
     # Update left panel
@@ -45,9 +45,11 @@ resize_handler() {
     
     # Update right panel
     right_panel.x = $((panel_width + 3))
-    right_panel.width = $panel_width
+    right_panel.width = $((cols - panel_width - 4))
     right_panel.height = $panel_height
     
+    cmd.row = $((rows - 1))
+
     # Redraw everything
     draw_screen
 }
@@ -62,6 +64,7 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/tui/color.class"
 . "$HACKFM_DIR/tui/box.class"
 . "$HACKFM_DIR/tui/input.class"
+. "$HACKFM_DIR/tui/region.class"
 
 # Load components (from HackFM directory)
 . "$HACKFM_DIR/appframe.h"
@@ -313,7 +316,7 @@ init() {
     local cols=$(main_frame.cols)
     local main_height=$(main_frame.main_height)
     
-    local panel_width=$(( (cols - 3) / 2 ))
+    local panel_width=$(( cols / 2 - 1))
     # Panel height = main area height - 3 (border at top, border at bottom, and command line)
     local panel_height=$((main_height - 3))
     
@@ -335,7 +338,7 @@ init() {
     panel right_panel
     right_panel.x = $((panel_width + 3))
     right_panel.y = 3
-    right_panel.width = $panel_width
+    right_panel.width = $(( cols - panel_width - 4 ))
     right_panel.height = $panel_height
     
     # Create filelist as a sub-object of right_panel
