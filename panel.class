@@ -615,21 +615,49 @@ __PANEL__.navigate(){
     
     # Get old cursor position
     local old_selected=$($list.selected)
+    local old_scroll=$($list.scroll)
     
     # Navigate (updates cursor position)
     $list.navigate "$direction" $max_visible
     
     # Get new cursor position
     local new_selected=$($list.selected)
+    local new_scroll=$($list.scroll)
     
-    # Re-render only the 2 affected rows (old and new cursor positions)
+    # If nothing changed, don't redraw
+    if [ $old_selected -eq $new_selected ] && [ $old_scroll -eq $new_scroll ]; then
+        return
+    fi
+    
+    # Update pre-rendered rows for changed positions
     if [ $old_selected -ne $new_selected ]; then
         __PANEL___rendered_rows[$old_selected]=$(__PANEL__.render_row_string $old_selected)
         __PANEL___rendered_rows[$new_selected]=$(__PANEL__.render_row_string $new_selected)
-        # Render panel to update display
-        __PANEL__.render
     fi
-    # If cursor didn't move, don't render anything
+    
+    # If scroll changed, we need full redraw
+    if [ $old_scroll -ne $new_scroll ]; then
+        __PANEL__.render
+    else
+        # Scroll didn't change - just redraw the 2 affected visible rows
+        local y=$(__PANEL__.y)
+        local x=$(__PANEL__.x)
+        local width=$(__PANEL__.width)
+        
+        # Redraw old cursor row (if visible)
+        local old_visible_row=$((old_selected - old_scroll))
+        if [ $old_visible_row -ge 0 ] && [ $old_visible_row -lt $max_visible ]; then
+            tui.cursor.move $((y + 1 + old_visible_row)) $((x + 1))
+            printf '%b' "${__PANEL___rendered_rows[$old_selected]}"
+        fi
+        
+        # Redraw new cursor row (if visible)
+        local new_visible_row=$((new_selected - new_scroll))
+        if [ $new_visible_row -ge 0 ] && [ $new_visible_row -lt $max_visible ]; then
+            tui.cursor.move $((y + 1 + new_visible_row)) $((x + 1))
+            printf '%b' "${__PANEL___rendered_rows[$new_selected]}"
+        fi
+    fi
 }
 
 # Get selected item info
