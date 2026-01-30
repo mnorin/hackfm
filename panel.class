@@ -355,27 +355,49 @@ __PANEL__.render(){
         ((row++))
     done
     
-    # Draw horizontal separator line with selection info
-    tui.cursor.move $separator_row $((x + 1))
+    # Draw info bar (includes separator with selection message)
+    __PANEL__.draw_info_bar
+    
+    tui.cursor.hide
+}
+
+# Draw info bar (filename or search field)
+__PANEL__.draw_info_bar(){
+    local x=$(__PANEL__.x)
+    local y=$(__PANEL__.y)
+    local width=$(__PANEL__.width)
+    local height=$(__PANEL__.height)
+    local active=$(__PANEL__.active)
+    local list=$(__PANEL__.list_source)
+    
+    local separator_row=$((y + height - 2))
+    local selected=$($list.selected)
+    local count=$($list.count)
+    
+    # Draw separator above filename bar (bright white to match panel border)
+    tui.cursor.move $separator_row $x
     tui.color.bg_blue
     tui.color.bright_white
     
-    # Get marked file stats (fast - no loop needed!)
+    # Left connector
+    printf "├"
+    
+    # Get marked file stats for selection message
     local selected_count=$($list.count_selected)
     local total_bytes=$($list.marked_size)
     
-    # Format total size
-    local size_str
-    if [ $total_bytes -lt 1024 ]; then
-        size_str="${total_bytes}B"
-    elif [ $total_bytes -lt 1048576 ]; then
-        size_str="$((total_bytes / 1024))KB"
-    else
-        size_str="$((total_bytes / 1048576))MB"
-    fi
-    
-    # Create message if files are selected
     if [ $selected_count -gt 0 ]; then
+        # Format total size
+        local size_str
+        if [ $total_bytes -lt 1024 ]; then
+            size_str="${total_bytes}B"
+        elif [ $total_bytes -lt 1048576 ]; then
+            size_str="$((total_bytes / 1024))KB"
+        else
+            size_str="$((total_bytes / 1048576))MB"
+        fi
+        
+        # Create message
         local msg=" ${size_str} in ${selected_count} files "
         local msg_len=${#msg}
         local left_dash=$(( (width - msg_len) / 2 ))
@@ -394,11 +416,14 @@ __PANEL__.render(){
             printf '─'
         done
     else
-        # No selection - just draw line
-        for ((i=0; i<width; i++)); do
-            printf '─'
+        # No selection - just draw horizontal line
+        for ((c=0; c<width; c++)); do
+            printf "─"
         done
     fi
+    
+    # Right connector
+    printf "┤"
     
     tui.color.reset
     
@@ -450,6 +475,147 @@ __PANEL__.render(){
     fi
     
     tui.color.reset
+}
+
+# Render panel
+__PANEL__.render(){
+    # Hide cursor during rendering to reduce artifacts
+    tui.cursor.hide
+    
+    local list=$(__PANEL__.list_source)
+    local debug_path=$($list.path)
+    local x=$(__PANEL__.x)
+    local y=$(__PANEL__.y)
+    local width=$(__PANEL__.width)
+    local height=$(__PANEL__.height)
+    local active=$(__PANEL__.active)
+    
+    # Get filelist data
+    local path=$($list.path)
+    local selected=$($list.selected)
+    local scroll=$($list.scroll)
+    
+    # Fill panel area with blue background (only the panel's area, not whole screen)
+    for ((r=y-1; r<=y+height; r++)); do
+        tui.cursor.move $r $x
+        tui.color.bg_blue
+        printf "%$((width + 2))s" ""
+        tui.color.reset
+    done
+    
+    # Set colors for border and draw it
+    tui.color.bg_blue
+    tui.color.white
+    tui.box.draw $((y - 1)) $x $((width + 2)) $((height + 2))
+    tui.color.reset
+    
+    # Draw header with path
+    tui.cursor.move $((y - 1)) $((x + 2))
+    
+    if [ $active -eq 1 ]; then
+        # Active panel: cyan/bold header
+        tui.color.bold
+        tui.color.cyan
+    else
+        # Inactive panel: white on blue (matches panel background)
+        tui.color.bg_blue
+        tui.color.white
+    fi
+    
+    # Truncate path if needed
+    local max_path_len=$((width - 4))
+    local display_path="$path"
+    if [ ${#path} -gt $max_path_len ]; then
+        display_path="...${path: -$((max_path_len - 3))}"
+    fi
+    printf " %s " "$display_path"
+    tui.color.reset
+    
+    # Draw column headers (bright yellow on blue, like MC)
+    # Layout: Name (fills left) │ Size (9 chars) │ Modify time (17 chars at right edge)
+    tui.cursor.move $y $((x + 1))
+    tui.color.bg_blue
+    local time_col_width=17
+    local size_col_width=9
+    local name_col_width=$((width - time_col_width - size_col_width - 2))  # -2 for separators
+    
+    # Get current sort order (skip for archives - they don't support sorting)
+    local sort_order="name_asc"  # default
+    local in_archive=$(__PANEL__.in_archive)
+    if [ "$in_archive" != "1" ]; then
+        local list=$(__PANEL__.list_source)
+        sort_order=$($list.sort_order)
+    fi
+    local name_indicator=""
+    local size_indicator=""
+    local time_indicator=""
+    
+    # MC convention: ' for ascending, . for descending
+    # Extension uses '_ and ._ to differentiate from name
+    case "$sort_order" in
+        name_asc)  name_indicator=" '" ;;
+        name_desc) name_indicator=" ." ;;
+        size_asc)  size_indicator=" '" ;;
+        size_desc) size_indicator=" ." ;;
+        date_asc)  time_indicator=" '" ;;
+        date_desc) time_indicator=" ." ;;
+        ext_asc)   name_indicator=" '_" ;;
+        ext_desc)  name_indicator=" ._" ;;
+    esac
+    
+    # Print Name header in bright yellow
+    tui.color.bright_yellow
+    local name_text="Name${name_indicator}"
+    printf "%-${name_col_width}s" "${name_text:0:$name_col_width}"
+    tui.color.reset
+    tui.color.bg_blue
+    tui.color.bright_white
+    printf "│"
+    
+    # Print Size header in bright yellow
+    tui.color.bright_yellow
+    local size_text="Size${size_indicator}"
+    printf "%${size_col_width}s" "${size_text:0:$size_col_width}"
+    tui.color.reset
+    tui.color.bg_blue
+    tui.color.bright_white
+    printf "│"
+    
+    # Print Modify time header in bright yellow
+    tui.color.bright_yellow
+    local time_text="Modify time${time_indicator}"
+    printf "%-${time_col_width}s" "${time_text:0:$time_col_width}"
+    tui.color.reset
+    
+    # Get file count
+    local count=$($list.count)
+    
+    # Draw rows from pre-rendered cache
+    local max_visible=$((height - 3))
+    for ((i=0; i<max_visible; i++)); do
+        local file_idx=$((scroll + i))
+        
+        if [ $file_idx -ge $count ]; then
+            # Fill empty rows with blue background and column separators
+            tui.cursor.move $((y + 1 + i)) $((x + 1))
+            tui.color.bg_blue
+            printf "%${name_col_width}s" ""
+            tui.color.bright_white
+            printf "│"
+            printf "%${size_col_width}s" ""
+            printf "│"
+            printf "%${time_col_width}s" ""
+            tui.color.reset
+        else
+            # Draw pre-rendered row
+            tui.cursor.move $((y + 1 + i)) $((x + 1))
+            printf '%b' "${__PANEL___rendered_rows[$file_idx]}"
+        fi
+    done
+    
+    # Draw info bar (includes separator)
+    __PANEL__.draw_info_bar
+    
     tui.cursor.hide
 }
 
@@ -651,13 +817,31 @@ __PANEL__.navigate(){
             local file_idx=$((new_scroll + i))
             local count=$($list.count)
             
-            # Skip if beyond file list
-            [ $file_idx -ge $count ] && break
-            
-            # Draw row at screen position
             tui.cursor.move $((y + 1 + i)) $((x + 1))
-            printf '%b' "${__PANEL___rendered_rows[$file_idx]}"
+            
+            if [ $file_idx -ge $count ]; then
+                # Fill empty rows with blue background and column separators
+                local width=$(__PANEL__.width)
+                local time_col_width=17
+                local size_col_width=9
+                local name_col_width=$((width - time_col_width - size_col_width - 2))
+                
+                tui.color.bg_blue
+                printf "%${name_col_width}s" ""
+                tui.color.bright_white
+                printf "│"
+                printf "%${size_col_width}s" ""
+                printf "│"
+                printf "%${time_col_width}s" ""
+                tui.color.reset
+            else
+                # Draw row at screen position
+                printf '%b' "${__PANEL___rendered_rows[$file_idx]}"
+            fi
         done
+        
+        # Update info bar with new selection
+        __PANEL__.draw_info_bar
         
     elif [ $old_scroll -ne $new_scroll ]; then
         # Scroll changed by more than 1 - need full redraw
@@ -683,6 +867,9 @@ __PANEL__.navigate(){
             tui.cursor.move $((y + 1 + new_visible_row)) $((x + 1))
             printf '%b' "${__PANEL___rendered_rows[$new_selected]}"
         fi
+        
+        # Update info bar with new selection
+        __PANEL__.draw_info_bar
     fi
 }
 
