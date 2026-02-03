@@ -75,13 +75,30 @@ __PANEL__.render_row_string(){
     fi
     
     # Build row string with escape codes
-    local row="\033[44m"  # Blue background
+    local row=""
     
-    # Name column color
+    # Determine if this row should be highlighted (cursor or marked)
+    local is_cursor=0
+    local is_marked_file=0
     if [ $file_idx -eq $selected ] && [ $active -eq 1 ]; then
-        row+="\033[46m\033[30m\033[1m"  # Cyan bg, black, bold
-    elif [ "$is_marked" = "1" ]; then
-        row+="\033[44m\033[33m\033[1m"  # Blue bg, yellow, bold
+        is_cursor=1
+    fi
+    if [ "$is_marked" = "1" ]; then
+        is_marked_file=1
+    fi
+    
+    # Set row background based on state
+    if [ $is_cursor -eq 1 ]; then
+        row+="\033[46m"  # Cyan background for entire row
+    else
+        row+="\033[44m"  # Blue background for entire row
+    fi
+    
+    # Name column - set text color only
+    if [ $is_cursor -eq 1 ]; then
+        row+="\033[30m"  # Black (on cyan bg)
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="\033[33m\033[1m"  # Yellow, bold (on blue bg)
     else
         if [ "$item_type" = "d" ]; then
             row+="\033[37m\033[1m"  # White, bold
@@ -93,10 +110,22 @@ __PANEL__.render_row_string(){
     fi
     row+="${prefix}${display_name}${padding}"
     
-    # Separator and columns
-    row+="\033[0m\033[44m\033[97m"
+    # Separator - keep same background, black text
+    if [ $is_cursor -eq 1 ]; then
+        row+="\033[30m"  # Black separator on cyan
+    else
+        row+="\033[97m"  # White separator on blue
+    fi
+    row+="│"
+    
+    # Size and time columns - keep background, black text for cursor
+    if [ $is_cursor -eq 1 ]; then
+        row+="\033[30m"  # Black text on cyan bg
+    else
+        row+="\033[97m"  # White text on blue bg
+    fi
     local display_time="${item_time:0:$time_col_width}"
-    row+="│$(printf "%${size_col_width}s" "$item_size")│$(printf "%-${time_col_width}s" "$display_time")"
+    row+="$(printf "%${size_col_width}s" "$item_size")│$(printf "%-${time_col_width}s" "$display_time")"
     row+="\033[0m"
     
     echo "$row"
@@ -112,6 +141,12 @@ __PANEL__.prerender_all_rows(){
     for ((i=0; i<count; i++)); do
         __PANEL___rendered_rows[$i]=$(__PANEL__.render_row_string $i)
     done
+}
+
+# Update a single pre-rendered row
+__PANEL__.update_rendered_row(){
+    local index=$1
+    __PANEL___rendered_rows[$index]=$(__PANEL__.render_row_string $index)
 }
 
 # Property accessors
@@ -224,6 +259,9 @@ __PANEL__.archive_path(){
 
 # Draw info bar (filename or search field)
 __PANEL__.draw_info_bar(){
+    # Disable echo to prevent artifacts
+    stty -echo 2>/dev/null
+    
     local x=$(__PANEL__.x)
     local y=$(__PANEL__.y)
     local width=$(__PANEL__.width)
@@ -281,7 +319,7 @@ __PANEL__.draw_info_bar(){
     # Draw separator in one go
     tui.cursor.move $separator_row $x
     tui.color.bg_blue
-    tui.color.bright_white
+    tui.color.white
     printf '%s' "$separator_line"
     tui.color.reset
     
@@ -337,6 +375,9 @@ __PANEL__.draw_info_bar(){
     fi
     
     tui.color.reset
+    
+    # Re-enable echo
+    stty echo 2>/dev/null
 }
 
 # Render panel
