@@ -35,7 +35,7 @@ resize_handler() {
     local rows=$(main_frame.rows)
     local cols=$(main_frame.cols)
     local main_height=$(main_frame.main_height)
-    local panel_width=$((cols / 2 - 1))
+    local panel_width=$(((cols - 3) / 2))
     local panel_height=$((main_height - 3))
     
     # Update left panel
@@ -45,11 +45,9 @@ resize_handler() {
     
     # Update right panel
     right_panel.x = $((panel_width + 3))
-    right_panel.width = $((cols - panel_width - 4))
+    right_panel.width = $panel_width
     right_panel.height = $panel_height
     
-    cmd.row = $((rows - 1))
-
     # Redraw everything
     draw_screen
 }
@@ -316,7 +314,7 @@ init() {
     local cols=$(main_frame.cols)
     local main_height=$(main_frame.main_height)
     
-    local panel_width=$(( cols / 2 - 1))
+    local panel_width=$(( (cols - 3) / 2 ))
     # Panel height = main area height - 3 (border at top, border at bottom, and command line)
     local panel_height=$((main_height - 3))
     
@@ -970,27 +968,9 @@ delete_item() {
         fi
         
         if [ $delete_success -eq 1 ]; then
-            reload_active_panel
-            
-            local file_count=$($active_list.count)
-            
-            local new_index=$current_index
-            if [ $current_index -ge $((file_count - 1)) ] && [ $current_index -gt 0 ]; then
-                new_index=$((current_index - 1))
-            fi
-            
-            $active_list.selected = $new_index
-            
+            # Reload panel - it will preserve cursor position
             local active_panel=$(get_active_panel)
-            local panel_height=$($active_panel.height)
-            local max_visible=$((panel_height - 3))
-            local scroll=$($active_list.scroll)
-            
-            if [ $new_index -lt $scroll ]; then
-                $active_list.scroll = $new_index
-            elif [ $new_index -ge $((scroll + max_visible)) ]; then
-                $active_list.scroll = $((new_index - max_visible + 1))
-            fi
+            $active_panel.reload
             
             draw_screen
         fi
@@ -1583,7 +1563,6 @@ main_loop() {
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     # In File Manager workspace - always navigate files
                     navigate UP
-                    cmd.render
                 else
                     # In buffer mode - navigate command history
                     cmd.history_prev
@@ -1595,7 +1574,6 @@ main_loop() {
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     # In File Manager workspace - always navigate files
                     navigate DOWN
-                    cmd.render
                 else
                     # In buffer mode - navigate command history
                     cmd.history_next
@@ -1606,14 +1584,12 @@ main_loop() {
             PAGEUP)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     navigate PAGEUP
-                    cmd.render
                 fi
                 ;;
                 
             PAGEDOWN)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     navigate PAGEDOWN
-                    cmd.render
                 fi
                 ;;
                 
@@ -1622,7 +1598,7 @@ main_loop() {
                     if [ $has_cmdline_text -eq 1 ]; then
                         # Move cursor to start of command line
                         cmd.move_cursor HOME
-                        cmd.render
+                        draw_command_line
                     else
                         navigate HOME
                         $(get_active_panel).render
@@ -1638,7 +1614,7 @@ main_loop() {
                     if [ $has_cmdline_text -eq 1 ]; then
                         # Move cursor to end of command line
                         cmd.move_cursor END
-                        cmd.render
+                        draw_command_line
                     else
                         navigate END
                         $(get_active_panel).render
