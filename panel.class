@@ -89,44 +89,70 @@ __PANEL__.render_row_string(){
     
     # Set row background based on state
     if [ $is_cursor -eq 1 ]; then
-        row+="\033[46m"  # Cyan background for entire row
+        row+="$(tui.color.bg_cyan)"  # Cyan background for entire row
     else
-        row+="\033[44m"  # Blue background for entire row
+        row+="$(tui.color.bg_blue)"  # Blue background for entire row
     fi
     
     # Name column - set text color only
     if [ $is_cursor -eq 1 ]; then
-        row+="\033[30m"  # Black (on cyan bg)
+        row+="$(tui.color.black)"  # Black (on cyan bg)
     elif [ $is_marked_file -eq 1 ]; then
-        row+="\033[33m\033[1m"  # Yellow, bold (on blue bg)
+        row+="$(tui.color.yellow)$(tui.color.bold)"  # Yellow, bold (on blue bg)
     else
         if [ "$item_type" = "d" ]; then
-            row+="\033[37m\033[1m"  # White, bold
+            row+="$(tui.color.white)$(tui.color.bold)"  # White, bold
         elif [ "$is_exec" = "1" ]; then
-            row+="\033[92m"  # Bright green
+            row+="$(tui.color.bright_green)"  # Bright green
         else
-            row+="\033[97m"  # Bright white
+            row+="$(tui.color.white)"  # White (not bright)
         fi
     fi
     row+="${prefix}${display_name}${padding}"
     
-    # Separator - keep same background, black text
+    # Separator - turn off bold temporarily
     if [ $is_cursor -eq 1 ]; then
-        row+="\033[30m"  # Black separator on cyan
+        row+="$(tui.color.black)"  # Black separator on cyan
     else
-        row+="\033[97m"  # White separator on blue
+        row+="\033[22m"  # Turn off bold (no tui function for SGR 22)
+        row+="$(tui.color.white)"
     fi
     row+="│"
     
-    # Size and time columns - keep background, black text for cursor
+    # Size and time columns - restore bold for directories
     if [ $is_cursor -eq 1 ]; then
-        row+="\033[30m"  # Black text on cyan bg
+        row+="$(tui.color.black)"  # Black text on cyan bg
     else
-        row+="\033[97m"  # White text on blue bg
+        if [ "$item_type" = "d" ]; then
+            row+="$(tui.color.white)$(tui.color.bold)"
+        else
+            row+="$(tui.color.white)"
+        fi
     fi
     local display_time="${item_time:0:$time_col_width}"
-    row+="$(printf "%${size_col_width}s" "$item_size")│$(printf "%-${time_col_width}s" "$display_time")"
-    row+="\033[0m"
+    row+="$(printf "%${size_col_width}s" "$item_size")"
+    
+    # Second separator - turn off bold
+    if [ $is_cursor -eq 1 ]; then
+        row+="$(tui.color.black)"  # Black separator on cyan
+    else
+        row+="\033[22m"  # Turn off bold (no tui function for SGR 22)
+        row+="$(tui.color.white)"
+    fi
+    row+="│"
+    
+    # Time column - restore bold for directories
+    if [ $is_cursor -eq 1 ]; then
+        row+="$(tui.color.black)"  # Black on cyan
+    else
+        if [ "$item_type" = "d" ]; then
+            row+="$(tui.color.white)$(tui.color.bold)"
+        else
+            row+="$(tui.color.white)"
+        fi
+    fi
+    row+="$(printf "%-${time_col_width}s" "$display_time")"
+    row+="$(tui.color.reset)"
     
     echo "$row"
 }
@@ -387,7 +413,7 @@ __PANEL__.draw_info_bar(){
         # Draw with blue background
         tui.cursor.move $((separator_row + 1)) $((x + 1))
         tui.color.bg_blue
-        tui.color.bright_white
+        tui.color.white
         printf '%s' "$info_line"
     fi
     
@@ -489,7 +515,7 @@ __PANEL__.render(){
     printf "%-${name_col_width}s" "${name_text:0:$name_col_width}"
     tui.color.reset
     tui.color.bg_blue
-    tui.color.bright_white
+    tui.color.white
     printf "│"
     
     # Print Size header in bright yellow
@@ -498,7 +524,7 @@ __PANEL__.render(){
     printf "%${size_col_width}s" "${size_text:0:$size_col_width}"
     tui.color.reset
     tui.color.bg_blue
-    tui.color.bright_white
+    tui.color.white
     printf "│"
     
     # Print Modify time header in bright yellow
@@ -522,7 +548,7 @@ __PANEL__.render(){
             # Build empty row as string
             local empty_row="\033[44m"  # Blue background
             empty_row+="$(printf "%${name_col_width}s" "")"
-            empty_row+="\033[97m"  # Bright white for separator
+            empty_row+="\033[37m"  # White for separator (not bright)
             empty_row+="│"
             empty_row+="$(printf "%${size_col_width}s" "")"
             empty_row+="│"
@@ -594,7 +620,7 @@ __PANEL__.quick_search(){
                 local separator_row=$((y + height - 2))
                 tui.cursor.move $((separator_row + 1)) $((x + 1))
                 tui.color.bg_blue
-                tui.color.bright_white
+                tui.color.white
                 
                 # Truncate if needed
                 if [ ${#selected_name} -gt $width ]; then
@@ -755,7 +781,7 @@ __PANEL__.navigate(){
                 # Build empty row as string
                 local empty_row="\033[44m"  # Blue background
                 empty_row+="$(printf "%${name_col_width}s" "")"
-                empty_row+="\033[97m"  # Bright white for separator
+                empty_row+="\033[37m"  # White for separator (not bright)
                 empty_row+="│"
                 empty_row+="$(printf "%${size_col_width}s" "")"
                 empty_row+="│"
