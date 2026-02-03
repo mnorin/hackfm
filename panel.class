@@ -149,6 +149,23 @@ __PANEL__.update_rendered_row(){
     __PANEL___rendered_rows[$index]=$(__PANEL__.render_row_string $index)
 }
 
+# Toggle selection and move down
+__PANEL__.toggle_selection_and_move(){
+    local list=$(__PANEL__.list_source)
+    
+    # Get position before toggle
+    local old_pos=$($list.selected)
+    
+    # Toggle selection
+    $list.toggle_selection
+    
+    # Update the row that was toggled
+    __PANEL__.update_rendered_row $old_pos
+    
+    # Move down
+    __PANEL__.navigate DOWN
+}
+
 # Property accessors
 __PANEL__.x(){
     if [ "$1" = "=" ]; then

@@ -1744,10 +1744,7 @@ RCFILE
             # INSERT - toggle selection and move down
             INSERT)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
-                    local list=$(get_active_panel).list
-                    $list.toggle_selection
-                    navigate DOWN
-                    $(get_active_panel).render
+                    $(get_active_panel).toggle_selection_and_move
                 fi
                 ;;
                 
