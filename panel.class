@@ -221,145 +221,6 @@ __PANEL__.archive_path(){
 }
 
 # Render method
-__PANEL__.render(){
-    # Hide cursor during rendering to reduce artifacts
-    tui.cursor.hide
-    
-    local list=$(__PANEL__.list_source)
-    local debug_path=$($list.path)
-    local x=$(__PANEL__.x)
-    local y=$(__PANEL__.y)
-    local width=$(__PANEL__.width)
-    local height=$(__PANEL__.height)
-    local active=$(__PANEL__.active)
-    
-    # Get filelist data
-    local path=$($list.path)
-    local selected=$($list.selected)
-    local scroll=$($list.scroll)
-    
-    # Fill panel area with blue background (only the panel's area, not whole screen)
-    for ((r=y-1; r<=y+height; r++)); do
-        tui.cursor.move $r $x
-        tui.color.bg_blue
-        printf "%$((width + 2))s" ""
-        tui.color.reset
-    done
-    
-    # Set colors for border and draw it
-    tui.color.bg_blue
-    tui.color.white
-    tui.box.draw $((y - 1)) $x $((width + 2)) $((height + 2))
-    tui.color.reset
-    
-    # Draw header with path
-    tui.cursor.move $((y - 1)) $((x + 2))
-    
-    if [ $active -eq 1 ]; then
-        # Active panel: cyan/bold header
-        tui.color.bold
-        tui.color.cyan
-    else
-        # Inactive panel: white on blue (matches panel background)
-        tui.color.bg_blue
-        tui.color.white
-    fi
-    
-    # Truncate path if needed
-    local max_path_len=$((width - 4))
-    local display_path="$path"
-    if [ ${#path} -gt $max_path_len ]; then
-        display_path="...${path: -$((max_path_len - 3))}"
-    fi
-    printf " %s " "$display_path"
-    tui.color.reset
-    
-    # Draw column headers (bright yellow on blue, like MC)
-    # Layout: Name (fills left) │ Size (9 chars) │ Modify time (17 chars at right edge)
-    tui.cursor.move $y $((x + 1))
-    tui.color.bg_blue
-    local time_col_width=17
-    local size_col_width=9
-    local name_col_width=$((width - time_col_width - size_col_width - 2))  # -2 for separators
-    
-    # Get current sort order (skip for archives - they don't support sorting)
-    local sort_order="name_asc"  # default
-    local in_archive=$(__PANEL__.in_archive)
-    if [ "$in_archive" != "1" ]; then
-        local list=$(__PANEL__.list_source)
-        sort_order=$($list.sort_order)
-    fi
-    local name_indicator=""
-    local size_indicator=""
-    local time_indicator=""
-    
-    # MC convention: ' for ascending, . for descending
-    # Extension uses '_ and ._ to differentiate from name
-    case "$sort_order" in
-        name_asc)  name_indicator=" '" ;;
-        name_desc) name_indicator=" ." ;;
-        size_asc)  size_indicator=" '" ;;
-        size_desc) size_indicator=" ." ;;
-        date_asc)  time_indicator=" '" ;;
-        date_desc) time_indicator=" ." ;;
-        ext_asc)   name_indicator=" '_" ;;
-        ext_desc)  name_indicator=" ._" ;;
-    esac
-    
-    # Print Name header in bright yellow
-    tui.color.bright_yellow
-    local name_text="Name${name_indicator}"
-    printf "%-${name_col_width}s" "${name_text:0:$name_col_width}"
-    tui.color.reset
-    tui.color.bg_blue
-    tui.color.bright_white
-    printf "│"
-    
-    # Print Size header in bright yellow
-    tui.color.bright_yellow
-    local size_text="Size${size_indicator}"
-    printf "%${size_col_width}s" "${size_text:0:$size_col_width}"
-    tui.color.reset
-    tui.color.bg_blue
-    tui.color.bright_white
-    printf "│"
-    
-    # Print Modify time header in bright yellow
-    tui.color.bright_yellow
-    local time_text="Modify time${time_indicator}"
-    printf "%-${time_col_width}s" "${time_text:0:$time_col_width}"
-    tui.color.reset
-    
-    # Draw files - start one row down to account for header
-    local row=$((y + 1))
-    
-    # Get file count from filelist
-    local count=$($list.count)
-    
-    # Print pre-rendered rows (much faster!)
-    for ((i=scroll; i<scroll+height-3 && i<count; i++)); do
-        tui.cursor.move $row $((x + 1))
-        printf "%b" "${__PANEL___rendered_rows[$i]}"
-        ((row++))
-    done
-    
-    # Fill remaining rows with blue background and column separators
-    local separator_row=$((y + height - 2))  # Two rows from bottom (separator + filename)
-    while [ $row -lt $separator_row ]; do
-        tui.cursor.move $row $((x + 1))
-        tui.color.bg_blue
-        tui.color.bright_white
-        # Print empty space with column separators
-        printf "%-${name_col_width}s│%${size_col_width}s│%-${time_col_width}s" "" "" ""
-        tui.color.reset
-        ((row++))
-    done
-    
-    # Draw info bar (includes separator with selection message)
-    __PANEL__.draw_info_bar
-    
-    tui.cursor.hide
-}
 
 # Draw info bar (filename or search field)
 __PANEL__.draw_info_bar(){
@@ -374,13 +235,8 @@ __PANEL__.draw_info_bar(){
     local selected=$($list.selected)
     local count=$($list.count)
     
-    # Draw separator above filename bar (bright white to match panel border)
-    tui.cursor.move $separator_row $x
-    tui.color.bg_blue
-    tui.color.bright_white
-    
-    # Left connector
-    printf "├"
+    # Build separator line as string
+    local separator_line=""
     
     # Get marked file stats for selection message
     local selected_count=$($list.count_selected)
@@ -403,41 +259,39 @@ __PANEL__.draw_info_bar(){
         local left_dash=$(( (width - msg_len) / 2 ))
         local right_dash=$(( width - msg_len - left_dash ))
         
-        # Draw left dashes
+        # Build separator with message
+        separator_line="├"
         for ((i=0; i<left_dash; i++)); do
-            printf '─'
+            separator_line+="─"
         done
-        
-        # Draw message
-        printf '%s' "$msg"
-        
-        # Draw right dashes
+        separator_line+="$msg"
         for ((i=0; i<right_dash; i++)); do
-            printf '─'
+            separator_line+="─"
         done
+        separator_line+="┤"
     else
         # No selection - just draw horizontal line
+        separator_line="├"
         for ((c=0; c<width; c++)); do
-            printf "─"
+            separator_line+="─"
         done
+        separator_line+="┤"
     fi
     
-    # Right connector
-    printf "┤"
-    
+    # Draw separator in one go
+    tui.cursor.move $separator_row $x
+    tui.color.bg_blue
+    tui.color.bright_white
+    printf '%s' "$separator_line"
     tui.color.reset
     
-    # Draw filename bar at bottom showing selected item or search field
-    tui.cursor.move $((separator_row + 1)) $((x + 1))
-    
+    # Build info bar line as string
+    local info_line=""
     local mode=$(__PANEL__.mode)
     local search_text=$(__PANEL__.search_text)
     
     if [ "$mode" = "search" ] && [ $active -eq 1 ]; then
         # Show search field (only for active panel in search mode)
-        tui.color.bg_cyan
-        tui.color.black
-        
         local prompt="Search: "
         local display_text="$prompt$search_text"
         
@@ -447,13 +301,15 @@ __PANEL__.draw_info_bar(){
             display_text="$prompt${search_text: -$max_text}"
         fi
         
-        printf "%-${width}s" "$display_text"
+        info_line=$(printf "%-${width}s" "$display_text")
+        
+        # Draw with cyan background
+        tui.cursor.move $((separator_row + 1)) $((x + 1))
+        tui.color.bg_cyan
+        tui.color.black
+        printf '%s' "$info_line"
     else
         # Show filename
-        tui.color.bg_blue
-        tui.color.bright_white
-        
-        # Get selected filename
         local selected_name=""
         if [ $count -gt 0 ]; then
             local fname ftype fsize ftime fexec fsel flink
@@ -471,7 +327,13 @@ __PANEL__.draw_info_bar(){
             selected_name="${selected_name:0:$((width - 3))}..."
         fi
         
-        printf "%-${width}s" "$selected_name"
+        info_line=$(printf "%-${width}s" "$selected_name")
+        
+        # Draw with blue background
+        tui.cursor.move $((separator_row + 1)) $((x + 1))
+        tui.color.bg_blue
+        tui.color.bright_white
+        printf '%s' "$info_line"
     fi
     
     tui.color.reset
@@ -598,14 +460,19 @@ __PANEL__.render(){
         if [ $file_idx -ge $count ]; then
             # Fill empty rows with blue background and column separators
             tui.cursor.move $((y + 1 + i)) $((x + 1))
-            tui.color.bg_blue
-            printf "%${name_col_width}s" ""
-            tui.color.bright_white
-            printf "│"
-            printf "%${size_col_width}s" ""
-            printf "│"
-            printf "%${time_col_width}s" ""
-            tui.color.reset
+            
+            # Build empty row as string
+            local empty_row="\033[44m"  # Blue background
+            empty_row+="$(printf "%${name_col_width}s" "")"
+            empty_row+="\033[97m"  # Bright white for separator
+            empty_row+="│"
+            empty_row+="$(printf "%${size_col_width}s" "")"
+            empty_row+="│"
+            empty_row+="$(printf "%${time_col_width}s" "")"
+            empty_row+="\033[0m"  # Reset
+            
+            # Print in one go
+            printf '%b' "$empty_row"
         else
             # Draw pre-rendered row
             tui.cursor.move $((y + 1 + i)) $((x + 1))
@@ -795,6 +662,10 @@ __PANEL__.navigate(){
         return
     fi
     
+    # Disable echo and hide cursor before any drawing operations
+    stty -echo 2>/dev/null
+    tui.cursor.hide
+    
     # Update pre-rendered rows for changed positions
     if [ $old_selected -ne $new_selected ]; then
         __PANEL___rendered_rows[$old_selected]=$(__PANEL__.render_row_string $old_selected)
@@ -806,9 +677,6 @@ __PANEL__.navigate(){
     
     # If scroll changed by exactly 1 line, redraw all visible rows at new positions
     if [ $scroll_delta -eq 1 ] || [ $scroll_delta -eq -1 ]; then
-        # Hide cursor during redraw
-        tui.cursor.hide
-        
         local y=$(__PANEL__.y)
         local x=$(__PANEL__.x)
         
@@ -826,14 +694,18 @@ __PANEL__.navigate(){
                 local size_col_width=9
                 local name_col_width=$((width - time_col_width - size_col_width - 2))
                 
-                tui.color.bg_blue
-                printf "%${name_col_width}s" ""
-                tui.color.bright_white
-                printf "│"
-                printf "%${size_col_width}s" ""
-                printf "│"
-                printf "%${time_col_width}s" ""
-                tui.color.reset
+                # Build empty row as string
+                local empty_row="\033[44m"  # Blue background
+                empty_row+="$(printf "%${name_col_width}s" "")"
+                empty_row+="\033[97m"  # Bright white for separator
+                empty_row+="│"
+                empty_row+="$(printf "%${size_col_width}s" "")"
+                empty_row+="│"
+                empty_row+="$(printf "%${time_col_width}s" "")"
+                empty_row+="\033[0m"  # Reset
+                
+                # Print in one go
+                printf '%b' "$empty_row"
             else
                 # Draw row at screen position
                 printf '%b' "${__PANEL___rendered_rows[$file_idx]}"
@@ -848,8 +720,6 @@ __PANEL__.navigate(){
         __PANEL__.render
     else
         # Scroll didn't change - just redraw the 2 affected visible rows
-        tui.cursor.hide
-        
         local y=$(__PANEL__.y)
         local x=$(__PANEL__.x)
         local width=$(__PANEL__.width)
@@ -871,6 +741,9 @@ __PANEL__.navigate(){
         # Update info bar with new selection
         __PANEL__.draw_info_bar
     fi
+    
+    # Re-enable echo
+    stty echo 2>/dev/null
 }
 
 # Get selected item info
@@ -890,7 +763,32 @@ __PANEL__.get_selected_item(){
 # Reload panel's filelist from disk (re-scans current directory to pick up changes)
 __PANEL__.reload(){
     local list=$(__PANEL__.list_source)
+    
+    # Save current position before reload
+    local saved_position=$($list.selected)
+    
+    # Reload the list (resets selected and scroll to 0)
     $list.load
+    
+    # Restore and clamp position
+    local count=$($list.count)
+    if [ $saved_position -ge $count ] && [ $count -gt 0 ]; then
+        saved_position=$((count - 1))
+    fi
+    $list.selected = $saved_position
+    
+    # Adjust scroll to keep selection visible
+    local height=$(__PANEL__.height)
+    local max_visible=$((height - 3))
+    local scroll=0  # load resets scroll to 0
+    
+    if [ $saved_position -lt $scroll ]; then
+        $list.scroll = $saved_position
+    elif [ $saved_position -ge $max_visible ]; then
+        $list.scroll = $((saved_position - max_visible + 1))
+    fi
+    
+    # Re-render with correct position
     __PANEL__.prerender_all_rows
 }
 
@@ -916,14 +814,14 @@ __PANEL__._enter_archive(){
     
     # Detect archive type
     local archive_type
-    case "$archive_file" in
+    case "${archive_file,,}" in
         *.tar.gz|*.tgz)   archive_type="tar.gz" ;;
         *.tar.bz2|*.tbz2) archive_type="tar.bz2" ;;
         *.tar.xz|*.txz)   archive_type="tar.xz" ;;
         *.tar)            archive_type="tar" ;;
         *.zip)            archive_type="zip" ;;
         *.rar)            archive_type="rar" ;;
-        *.7z|*.7Z)        archive_type="7z" ;;
+        *.7z)             archive_type="7z" ;;
     esac
     
     # Create archivelist object as a separate object
