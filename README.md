@@ -26,12 +26,14 @@ Supports:
 4. Sorting file order ascending and descending on different fields
 5. Integrated file viewer
 6. Integrated text editor (be careful with this one, saves changes automatically, may need to fix it)
-7. Navigating archives (tar, tar.gz, tar.bz2, tar.xz, zip, rar, 7z), extracting files is not supported yet, may require 
+7. Navigating archives (tar, tar.gz, tar.bz2, tar.xz, zip, rar, 7z), extracting files is not supported yet
 
 TODO:
 
 1. Extracting files from archives
-2. Message broken for components communication (e.g. triggering update on other components)
+2. Message broker for components communication (e.g. triggering update on other components)
 3. ? Multiple functional key layers
 4. Centralized configuration
+5. Massive refactoring
+6. Performance improvements
 
