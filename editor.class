@@ -200,6 +200,8 @@ __EDITOR__.save(){
 
 # Draw status bar
 __EDITOR__.draw_status(){
+    tui.cursor.hide
+    
     local filepath=$(__EDITOR__.filepath)
     local modified=$(__EDITOR__.modified)
     local cursor_row=$(__EDITOR__.cursor_row)
@@ -234,6 +236,8 @@ __EDITOR__.draw_help(){
 
 # Draw content
 __EDITOR__.draw_content(){
+    tui.cursor.hide
+    
     local viewport_top=$(__EDITOR__.viewport_top)
     local viewport_left=$(__EDITOR__.viewport_left)
     
@@ -256,57 +260,91 @@ __EDITOR__.draw_content(){
     
     for ((i=0; i<EDITOR_VIEWPORT_HEIGHT; i++)); do
         local file_row=$((viewport_top + i))
+        __EDITOR__.draw_line $screen_row $file_row
+        ((screen_row++))
+    done
+    
+    tui.style.reset
+}
+
+# Draw a single line at a specific screen row
+__EDITOR__.draw_line(){
+    local screen_row=$1
+    local file_row=$2
+    
+    local viewport_left=$(__EDITOR__.viewport_left)
+    
+    # Get selection bounds if active
+    local sel_active=$(__EDITOR__.selection_active)
+    local sel_start_row=$(__EDITOR__.selection_start_row)
+    local sel_start_col=$(__EDITOR__.selection_start_col)
+    local sel_end_row=$(__EDITOR__.selection_end_row)
+    local sel_end_col=$(__EDITOR__.selection_end_col)
+    
+    # Normalize selection
+    if [ $sel_active -eq 1 ]; then
+        if [ $sel_start_row -gt $sel_end_row ] || ([ $sel_start_row -eq $sel_end_row ] && [ $sel_start_col -gt $sel_end_col ]); then
+            local tmp=$sel_start_row; sel_start_row=$sel_end_row; sel_end_row=$tmp
+            tmp=$sel_start_col; sel_start_col=$sel_end_col; sel_end_col=$tmp
+        fi
+    fi
+    
+    tui.cursor.move $screen_row 1
+    
+    # Blue background for editor
+    tui.color.bg_blue
+    tui.color.bright_white
+    
+    # Clear line with blue background
+    printf "%${EDITOR_VIEWPORT_WIDTH}s" ""
+    
+    tui.cursor.move $screen_row 1
+    
+    if [ $file_row -lt ${#__EDITOR___lines[@]} ]; then
+        # Show line content with selection highlighting
+        local line="${__EDITOR___lines[$file_row]}"
         
-        tui.cursor.move $screen_row 1
+        # Check if this line has selection
+        local has_selection=0
+        local sel_col_start=0
+        local sel_col_end=${#line}
         
-        # Blue background for editor
-        tui.color.bg_blue
-        tui.color.bright_white
-        
-        # Clear line with blue background
-        printf "%${EDITOR_VIEWPORT_WIDTH}s" ""
-        
-        tui.cursor.move $screen_row 1
-        
-        if [ $file_row -lt ${#__EDITOR___lines[@]} ]; then
-            # Show line content with selection highlighting
-            local line="${__EDITOR___lines[$file_row]}"
-            
-            # Check if this line has selection
-            local has_selection=0
-            local sel_col_start=0
-            local sel_col_end=${#line}
-            
-            if [ $sel_active -eq 1 ]; then
-                if [ $file_row -ge $sel_start_row ] && [ $file_row -le $sel_end_row ]; then
-                    has_selection=1
-                    
-                    if [ $file_row -eq $sel_start_row ]; then
-                        sel_col_start=$sel_start_col
-                    fi
-                    
-                    if [ $file_row -eq $sel_end_row ]; then
-                        # Selection is EXCLUSIVE of end position (don't highlight char under cursor)
-                        sel_col_end=$sel_end_col
-                    fi
+        if [ $sel_active -eq 1 ]; then
+            if [ $file_row -ge $sel_start_row ] && [ $file_row -le $sel_end_row ]; then
+                has_selection=1
+                
+                if [ $file_row -eq $sel_start_row ]; then
+                    sel_col_start=$sel_start_col
+                fi
+                
+                if [ $file_row -eq $sel_end_row ]; then
+                    # Selection is EXCLUSIVE of end position (don't highlight char under cursor)
+                    sel_col_end=$sel_end_col
                 fi
             fi
-            
-            # Apply horizontal scroll
-            local visible_start=$viewport_left
-            local visible_end=$((viewport_left + EDITOR_VIEWPORT_WIDTH))
-            
-            # Draw character by character with selection highlighting
+        fi
+        
+        # Apply horizontal scroll
+        local visible_start=$viewport_left
+        local visible_end=$((viewport_left + EDITOR_VIEWPORT_WIDTH))
+        
+        # Optimize: if no selection on this line, print entire line at once
+        if [ $has_selection -eq 0 ]; then
+            # No selection - fast path, print whole visible portion
+            local visible_line="${line:$visible_start:$EDITOR_VIEWPORT_WIDTH}"
+            printf "%s" "$visible_line"
+        else
+            # Selection on this line - draw character by character with highlighting
             for ((col=visible_start; col<visible_end && col<${#line}; col++)); do
                 local char="${line:$col:1}"
                 
-                if [ $has_selection -eq 1 ] && [ $col -ge $sel_col_start ] && [ $col -lt $sel_col_end ]; then
+                if [ $col -ge $sel_col_start ] && [ $col -lt $sel_col_end ]; then
                     # Character is selected - cyan background with black text (like status bar)
                     tui.color.bg_cyan
                     tui.color.black
-                    tui.color.bold
+                    tui.style.bold
                     printf "%s" "$char"
-                    tui.color.reset
+                    tui.style.reset
                     tui.color.bg_blue
                     tui.color.bright_white
                 else
@@ -314,19 +352,13 @@ __EDITOR__.draw_content(){
                     printf "%s" "$char"
                 fi
             done
-        else
-            # Show tilde for lines beyond end of file
-            tui.color.bg_blue
-            tui.color.white
-            printf "~"
         fi
-        
-        tui.color.reset
-        ((screen_row++))
-    done
+    fi
+    
+    tui.style.reset
 }
 
-# Update cursor position on screen
+# Old draw_content - now refactored to use draw_line
 __EDITOR__.update_cursor(){
     local cursor_row=$(__EDITOR__.cursor_row)
     local cursor_col=$(__EDITOR__.cursor_col)
@@ -337,6 +369,7 @@ __EDITOR__.update_cursor(){
     local screen_col=$((1 + cursor_col - viewport_left))
     
     tui.cursor.move $screen_row $screen_col
+    tui.cursor.show
 }
 
 # Adjust viewport to keep cursor visible
@@ -798,34 +831,127 @@ __EDITOR__.show(){
         case "$key" in
             # Navigation
             UP|DOWN|LEFT|RIGHT|HOME|END)
+                # Save old position
+                local old_viewport_top=$(__EDITOR__.viewport_top)
+                local old_cursor_row=$(__EDITOR__.cursor_row)
+                local old_cursor_col=$(__EDITOR__.cursor_col)
+                
                 __EDITOR__.move_cursor "$key"
+                
+                # Check if cursor actually moved
+                local new_cursor_row=$(__EDITOR__.cursor_row)
+                local new_cursor_col=$(__EDITOR__.cursor_col)
+                
+                if [ $old_cursor_row -eq $new_cursor_row ] && [ $old_cursor_col -eq $new_cursor_col ]; then
+                    # Cursor didn't move (at boundary) - do nothing
+                    continue
+                fi
                 
                 # If actively marking selection, update end position
                 local sel_marking=$(__EDITOR__.selection_marking)
                 if [ $sel_marking -eq 1 ]; then
-                    __EDITOR__.selection_end_row = $(__EDITOR__.cursor_row)
-                    __EDITOR__.selection_end_col = $(__EDITOR__.cursor_col)
+                    __EDITOR__.selection_end_row = $new_cursor_row
+                    __EDITOR__.selection_end_col = $new_cursor_col
+                    # Selection changed - need full redraw
+                    __EDITOR__.draw_content
+                    __EDITOR__.draw_status
+                    __EDITOR__.update_cursor
+                    continue
                 fi
                 
-                __EDITOR__.draw_content
-                __EDITOR__.draw_status
-                __EDITOR__.update_cursor
+                # Check if viewport scrolled
+                local new_viewport_top=$(__EDITOR__.viewport_top)
+                local viewport_delta=$((new_viewport_top - old_viewport_top))
+                
+                # Optimize for single-line vertical scroll
+                if [ "$key" = "UP" ] || [ "$key" = "DOWN" ]; then
+                    if [ $viewport_delta -eq 1 ]; then
+                        # Scrolled down by 1 - use scroll region
+                        tui.cursor.hide
+                        
+                        # Set scroll region (content area)
+                        tui.region.set $EDITOR_START_ROW $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1))
+                        
+                        # Scroll content up
+                        tui.cursor.move $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1)) 1
+                        tui.region.scroll_up
+                        
+                        # Draw new bottom line
+                        __EDITOR__.draw_line $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1)) $((new_viewport_top + EDITOR_VIEWPORT_HEIGHT - 1))
+                        
+                        # Reset scroll region
+                        tui.region.reset
+                        
+                        __EDITOR__.draw_status
+                        __EDITOR__.update_cursor
+                        
+                    elif [ $viewport_delta -eq -1 ]; then
+                        # Scrolled up by 1 - use scroll region
+                        tui.cursor.hide
+                        
+                        # Set scroll region
+                        tui.region.set $EDITOR_START_ROW $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1))
+                        
+                        # Scroll content down
+                        tui.cursor.move $EDITOR_START_ROW 1
+                        tui.region.scroll_down
+                        
+                        # Draw new top line
+                        __EDITOR__.draw_line $EDITOR_START_ROW $new_viewport_top
+                        
+                        # Reset scroll region
+                        tui.region.reset
+                        
+                        __EDITOR__.draw_status
+                        __EDITOR__.update_cursor
+                        
+                    elif [ $viewport_delta -ne 0 ]; then
+                        # Large scroll - full redraw
+                        __EDITOR__.draw_content
+                        __EDITOR__.draw_status
+                        __EDITOR__.update_cursor
+                    else
+                        # No viewport change - just update cursor and status
+                        __EDITOR__.draw_status
+                        __EDITOR__.update_cursor
+                    fi
+                else
+                    # LEFT/RIGHT/HOME/END - just update status and cursor
+                    __EDITOR__.draw_status
+                    __EDITOR__.update_cursor
+                fi
                 ;;
             
             # Page Up
             PAGEUP)
+                local old_viewport_top=$(__EDITOR__.viewport_top)
+                local old_cursor_row=$(__EDITOR__.cursor_row)
                 __EDITOR__.page_up
-                __EDITOR__.draw_content
-                __EDITOR__.draw_status
-                __EDITOR__.update_cursor
+                local new_viewport_top=$(__EDITOR__.viewport_top)
+                local new_cursor_row=$(__EDITOR__.cursor_row)
+                
+                # Only redraw if something changed
+                if [ $old_viewport_top -ne $new_viewport_top ] || [ $old_cursor_row -ne $new_cursor_row ]; then
+                    __EDITOR__.draw_content
+                    __EDITOR__.draw_status
+                    __EDITOR__.update_cursor
+                fi
                 ;;
             
             # Page Down
             PAGEDOWN)
+                local old_viewport_top=$(__EDITOR__.viewport_top)
+                local old_cursor_row=$(__EDITOR__.cursor_row)
                 __EDITOR__.page_down
-                __EDITOR__.draw_content
-                __EDITOR__.draw_status
-                __EDITOR__.update_cursor
+                local new_viewport_top=$(__EDITOR__.viewport_top)
+                local new_cursor_row=$(__EDITOR__.cursor_row)
+                
+                # Only redraw if something changed
+                if [ $old_viewport_top -ne $new_viewport_top ] || [ $old_cursor_row -ne $new_cursor_row ]; then
+                    __EDITOR__.draw_content
+                    __EDITOR__.draw_status
+                    __EDITOR__.update_cursor
+                fi
                 ;;
             
             # Enter
