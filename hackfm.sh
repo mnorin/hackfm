@@ -63,6 +63,7 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/tui/box.class"
 . "$HACKFM_DIR/tui/input.class"
 . "$HACKFM_DIR/tui/region.class"
+. "$HACKFM_DIR/tui/style.class"
 
 # Load components (from HackFM directory)
 . "$HACKFM_DIR/appframe.h"
