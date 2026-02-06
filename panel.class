@@ -75,29 +75,84 @@ __PANEL__.render_row_string(){
     fi
     
     # Build row string with escape codes
-    local row="\033[44m"  # Blue background
+    local row=""
     
-    # Name column color
+    # Determine if this row should be highlighted (cursor or marked)
+    local is_cursor=0
+    local is_marked_file=0
     if [ $file_idx -eq $selected ] && [ $active -eq 1 ]; then
-        row+="\033[46m\033[30m\033[1m"  # Cyan bg, black, bold
-    elif [ "$is_marked" = "1" ]; then
-        row+="\033[44m\033[33m\033[1m"  # Blue bg, yellow, bold
+        is_cursor=1
+    fi
+    if [ "$is_marked" = "1" ]; then
+        is_marked_file=1
+    fi
+    
+    # Set row background based on state
+    if [ $is_cursor -eq 1 ]; then
+        row+="$(tui.color.bg_cyan)"  # Cyan background for entire row
+    else
+        row+="$(tui.color.bg_blue)"  # Blue background for entire row
+    fi
+    
+    # Name column - set text color only
+    if [ $is_cursor -eq 1 ]; then
+        row+="$(tui.color.black)"  # Black (on cyan bg)
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="$(tui.color.yellow)$(tui.style.bold)"  # Yellow, bold (on blue bg)
     else
         if [ "$item_type" = "d" ]; then
-            row+="\033[37m\033[1m"  # White, bold
+            row+="$(tui.color.white)$(tui.style.bold)"  # White, bold
         elif [ "$is_exec" = "1" ]; then
-            row+="\033[92m"  # Bright green
+            row+="$(tui.color.bright_green)"  # Bright green
         else
-            row+="\033[97m"  # Bright white
+            row+="$(tui.color.white)"  # White (not bright)
         fi
     fi
     row+="${prefix}${display_name}${padding}"
     
-    # Separator and columns
-    row+="\033[0m\033[44m\033[97m"
+    # Separator - turn off bold temporarily
+    if [ $is_cursor -eq 1 ]; then
+        row+="$(tui.color.black)"  # Black separator on cyan
+    else
+        row+="$(tui.style.regular)"  # Turn off bold
+        row+="$(tui.color.white)"
+    fi
+    row+="│"
+    
+    # Size and time columns - restore bold for directories
+    if [ $is_cursor -eq 1 ]; then
+        row+="$(tui.color.black)"  # Black text on cyan bg
+    else
+        if [ "$item_type" = "d" ]; then
+            row+="$(tui.color.white)$(tui.style.bold)"
+        else
+            row+="$(tui.color.white)"
+        fi
+    fi
     local display_time="${item_time:0:$time_col_width}"
-    row+="│$(printf "%${size_col_width}s" "$item_size")│$(printf "%-${time_col_width}s" "$display_time")"
-    row+="\033[0m"
+    row+="$(printf "%${size_col_width}s" "$item_size")"
+    
+    # Second separator - turn off bold
+    if [ $is_cursor -eq 1 ]; then
+        row+="$(tui.color.black)"  # Black separator on cyan
+    else
+        row+="$(tui.style.regular)"  # Turn off bold
+        row+="$(tui.color.white)"
+    fi
+    row+="│"
+    
+    # Time column - restore bold for directories
+    if [ $is_cursor -eq 1 ]; then
+        row+="$(tui.color.black)"  # Black on cyan
+    else
+        if [ "$item_type" = "d" ]; then
+            row+="$(tui.color.white)$(tui.style.bold)"
+        else
+            row+="$(tui.color.white)"
+        fi
+    fi
+    row+="$(printf "%-${time_col_width}s" "$display_time")"
+    row+="$(tui.style.reset)"
     
     echo "$row"
 }
@@ -112,6 +167,29 @@ __PANEL__.prerender_all_rows(){
     for ((i=0; i<count; i++)); do
         __PANEL___rendered_rows[$i]=$(__PANEL__.render_row_string $i)
     done
+}
+
+# Update a single pre-rendered row
+__PANEL__.update_rendered_row(){
+    local index=$1
+    __PANEL___rendered_rows[$index]=$(__PANEL__.render_row_string $index)
+}
+
+# Toggle selection and move down
+__PANEL__.toggle_selection_and_move(){
+    local list=$(__PANEL__.list_source)
+    
+    # Get position before toggle
+    local old_pos=$($list.selected)
+    
+    # Toggle selection
+    $list.toggle_selection
+    
+    # Update the row that was toggled
+    __PANEL__.update_rendered_row $old_pos
+    
+    # Move down
+    __PANEL__.navigate DOWN
 }
 
 # Property accessors
@@ -151,11 +229,36 @@ __PANEL__.active(){
     if [ "$1" = "=" ]; then
         local old_value=$(__PANEL__.property active)
         __PANEL__.property active = "$2"
-        # Auto-render when active status changes
+        # Update only what changes when active status changes
         if [ "$old_value" != "$2" ]; then
-            # Pre-render all rows with new active status
-            __PANEL__.prerender_all_rows
-            __PANEL__.render
+            # If this is the initial activation (old_value is empty), do full render
+            if [ -z "$old_value" ]; then
+                __PANEL__.prerender_all_rows
+                __PANEL__.render
+            else
+                # Subsequent activations: just update header and cursor row
+                # Update header color
+                __PANEL__.draw_header
+                
+                # Update cursor row (changes color based on active status)
+                local list=$(__PANEL__.list_source)
+                local selected=$($list.selected)
+                __PANEL__.update_rendered_row $selected
+                
+                # Draw the updated cursor row
+                local y=$(__PANEL__.y)
+                local x=$(__PANEL__.x)
+                local scroll=$($list.scroll)
+                local height=$(__PANEL__.height)
+                local max_visible=$((height - 3))
+                local visible_row=$((selected - scroll))
+                
+                if [ $visible_row -ge 0 ] && [ $visible_row -lt $max_visible ]; then
+                    tui.cursor.move $((y + 1 + visible_row)) $((x + 1))
+                    printf '%b' "${__PANEL___rendered_rows[$selected]}"
+                fi
+            fi
+            
             # Also cd to this panel's directory when becoming active
             if [ "$2" = "1" ]; then
                 local list=$(__PANEL__.list_source)
@@ -224,6 +327,9 @@ __PANEL__.archive_path(){
 
 # Draw info bar (filename or search field)
 __PANEL__.draw_info_bar(){
+    # Disable echo to prevent artifacts
+    stty -echo 2>/dev/null
+    
     local x=$(__PANEL__.x)
     local y=$(__PANEL__.y)
     local width=$(__PANEL__.width)
@@ -281,9 +387,9 @@ __PANEL__.draw_info_bar(){
     # Draw separator in one go
     tui.cursor.move $separator_row $x
     tui.color.bg_blue
-    tui.color.bright_white
+    tui.color.white
     printf '%s' "$separator_line"
-    tui.color.reset
+    tui.style.reset
     
     # Build info bar line as string
     local info_line=""
@@ -332,11 +438,46 @@ __PANEL__.draw_info_bar(){
         # Draw with blue background
         tui.cursor.move $((separator_row + 1)) $((x + 1))
         tui.color.bg_blue
-        tui.color.bright_white
+        tui.color.white
         printf '%s' "$info_line"
     fi
     
-    tui.color.reset
+    tui.style.reset
+    
+    # Re-enable echo
+    stty echo 2>/dev/null
+}
+
+# Draw panel header with path
+__PANEL__.draw_header(){
+    local list=$(__PANEL__.list_source)
+    local x=$(__PANEL__.x)
+    local y=$(__PANEL__.y)
+    local width=$(__PANEL__.width)
+    local active=$(__PANEL__.active)
+    local path=$($list.path)
+    
+    # Draw header with path
+    tui.cursor.move $((y - 1)) $((x + 2))
+    
+    if [ $active -eq 1 ]; then
+        # Active panel: cyan/bold header
+        tui.style.bold
+        tui.color.cyan
+    else
+        # Inactive panel: white on blue (matches panel background)
+        tui.color.bg_blue
+        tui.color.white
+    fi
+    
+    # Truncate path if needed
+    local max_path_len=$((width - 4))
+    local display_path="$path"
+    if [ ${#path} -gt $max_path_len ]; then
+        display_path="...${path: -$((max_path_len - 3))}"
+    fi
+    printf " %s " "$display_path"
+    tui.style.reset
 }
 
 # Render panel
@@ -362,36 +503,17 @@ __PANEL__.render(){
         tui.cursor.move $r $x
         tui.color.bg_blue
         printf "%$((width + 2))s" ""
-        tui.color.reset
+        tui.style.reset
     done
     
     # Set colors for border and draw it
     tui.color.bg_blue
     tui.color.white
     tui.box.draw $((y - 1)) $x $((width + 2)) $((height + 2))
-    tui.color.reset
+    tui.style.reset
     
-    # Draw header with path
-    tui.cursor.move $((y - 1)) $((x + 2))
-    
-    if [ $active -eq 1 ]; then
-        # Active panel: cyan/bold header
-        tui.color.bold
-        tui.color.cyan
-    else
-        # Inactive panel: white on blue (matches panel background)
-        tui.color.bg_blue
-        tui.color.white
-    fi
-    
-    # Truncate path if needed
-    local max_path_len=$((width - 4))
-    local display_path="$path"
-    if [ ${#path} -gt $max_path_len ]; then
-        display_path="...${path: -$((max_path_len - 3))}"
-    fi
-    printf " %s " "$display_path"
-    tui.color.reset
+    # Draw header
+    __PANEL__.draw_header
     
     # Draw column headers (bright yellow on blue, like MC)
     # Layout: Name (fills left) │ Size (9 chars) │ Modify time (17 chars at right edge)
@@ -429,25 +551,25 @@ __PANEL__.render(){
     tui.color.bright_yellow
     local name_text="Name${name_indicator}"
     printf "%-${name_col_width}s" "${name_text:0:$name_col_width}"
-    tui.color.reset
+    tui.style.reset
     tui.color.bg_blue
-    tui.color.bright_white
+    tui.color.white
     printf "│"
     
     # Print Size header in bright yellow
     tui.color.bright_yellow
     local size_text="Size${size_indicator}"
     printf "%${size_col_width}s" "${size_text:0:$size_col_width}"
-    tui.color.reset
+    tui.style.reset
     tui.color.bg_blue
-    tui.color.bright_white
+    tui.color.white
     printf "│"
     
     # Print Modify time header in bright yellow
     tui.color.bright_yellow
     local time_text="Modify time${time_indicator}"
     printf "%-${time_col_width}s" "${time_text:0:$time_col_width}"
-    tui.color.reset
+    tui.style.reset
     
     # Get file count
     local count=$($list.count)
@@ -462,14 +584,14 @@ __PANEL__.render(){
             tui.cursor.move $((y + 1 + i)) $((x + 1))
             
             # Build empty row as string
-            local empty_row="\033[44m"  # Blue background
+            local empty_row="$(tui.color.bg_blue)"
             empty_row+="$(printf "%${name_col_width}s" "")"
-            empty_row+="\033[97m"  # Bright white for separator
+            empty_row+="$(tui.color.white)"
             empty_row+="│"
             empty_row+="$(printf "%${size_col_width}s" "")"
             empty_row+="│"
             empty_row+="$(printf "%${time_col_width}s" "")"
-            empty_row+="\033[0m"  # Reset
+            empty_row+="$(tui.style.reset)"
             
             # Print in one go
             printf '%b' "$empty_row"
@@ -536,7 +658,7 @@ __PANEL__.quick_search(){
                 local separator_row=$((y + height - 2))
                 tui.cursor.move $((separator_row + 1)) $((x + 1))
                 tui.color.bg_blue
-                tui.color.bright_white
+                tui.color.white
                 
                 # Truncate if needed
                 if [ ${#selected_name} -gt $width ]; then
@@ -544,7 +666,7 @@ __PANEL__.quick_search(){
                 fi
                 
                 printf "%-${width}s" "$selected_name"
-                tui.color.reset
+                tui.style.reset
                 
                 return 0
                 ;;
@@ -695,14 +817,14 @@ __PANEL__.navigate(){
                 local name_col_width=$((width - time_col_width - size_col_width - 2))
                 
                 # Build empty row as string
-                local empty_row="\033[44m"  # Blue background
+                local empty_row="$(tui.color.bg_blue)"
                 empty_row+="$(printf "%${name_col_width}s" "")"
-                empty_row+="\033[97m"  # Bright white for separator
+                empty_row+="$(tui.color.white)"
                 empty_row+="│"
                 empty_row+="$(printf "%${size_col_width}s" "")"
                 empty_row+="│"
                 empty_row+="$(printf "%${time_col_width}s" "")"
-                empty_row+="\033[0m"  # Reset
+                empty_row+="$(tui.style.reset)"
                 
                 # Print in one go
                 printf '%b' "$empty_row"
