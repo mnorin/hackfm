@@ -523,39 +523,50 @@ open_item() {
     local panel=$(get_active_panel)
     $panel.enter
     local action=$($panel.enter_result)
-    
+
     # Panel handles directory navigation and renders itself
     # We only handle file actions
-    
-    if [[ "$action" == execute:* ]]; then
-        # Execute file
-        local filepath="${action#execute:}"
-        
-        tui.screen.main
-        stty sane
-        
-        trap - ERR
-        set +e
-        "$filepath"
-        set -e
-        trap '__ba_err_report $? $LINENO' ERR
-        
-        tui.screen.alt
-        main_frame.setup
-        reload_both_panels
-        draw_screen
-    elif [[ "$action" == open:* ]]; then
-        # Open with default application
-        local filepath="${action#open:}"
-        
-        if command -v xdg-open &>/dev/null; then
+
+    if [[ "$action" == execute:* ]] || [[ "$action" == open:* ]]; then
+        local filepath="${action#*:}"
+        local ext="${filepath##*.}"
+        ext="${ext,,}"  # lowercase
+
+        # Check ext.conf for a handler (read fresh each time)
+        local handler=""
+        local ext_conf="$HACKFM_DIR/conf/ext.conf"
+        if [ -f "$ext_conf" ]; then
+            while IFS=' ' read -r conf_ext conf_cmd || [ -n "$conf_ext" ]; do
+                [ -z "$conf_ext" ] || [[ "$conf_ext" == \#* ]] && continue
+                if [ "${conf_ext,,}" = "$ext" ]; then
+                    handler="$conf_cmd"
+                    break
+                fi
+            done < "$ext_conf"
+        fi
+
+        if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
+            # Use configured handler
+            $handler "$filepath" &>/dev/null &
+        elif [[ "$action" == execute:* ]] && [ -z "$handler" ] && [ -x "$filepath" ]; then
+            # Truly executable script/binary with no ext.conf override - run it
+            tui.screen.main
+            stty sane
+
+            trap - ERR
+            set +e
+            "$filepath"
+            set -e
+            trap '__ba_err_report $? $LINENO' ERR
+
+            tui.screen.alt
+            main_frame.setup
+            reload_both_panels
+            draw_screen
+        elif command -v xdg-open &>/dev/null; then
             xdg-open "$filepath" &>/dev/null &
         elif command -v open &>/dev/null; then
-            # macOS
             open "$filepath" &>/dev/null &
-        else
-            # No xdg-open available - fallback to viewer
-            view_file
         fi
     fi
     # If action is "ok", panel navigated and already rendered itself

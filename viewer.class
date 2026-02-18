@@ -48,46 +48,111 @@ __VIEWER__.appframe_created(){
 # File lines array
 declare -ag __VIEWER___lines=()
 
-# Load file
+# Load file - checks view.conf for a text-conversion handler first,
+# falls back to reading the file directly if no handler or command not found
 __VIEWER__.load(){
     local filepath="$1"
-    
+    local ext="${filepath##*.}"
+    ext="${ext,,}"  # lowercase
+
     __VIEWER__.filepath = "$filepath"
     __VIEWER___lines=()
     __VIEWER__.scroll = 0
-    
-    # Read file
-    while IFS= read -r line; do
-        # Strip carriage returns (for Windows CRLF files)
-        line="${line%$'\r'}"
-        
-        # Sanitize: replace control chars (0-31 except tab, and 127) with dots
-        # This prevents escape sequences and other control chars from breaking the UI
-        line=$(echo "$line" | tr '\000-\010\013-\037\177' '.')
-        
-        __VIEWER___lines+=("$line")
-    done < "$filepath"
+
+    # Check view.conf for a handler for this extension (read fresh each time)
+    # Full line after the extension is the command template; %f is replaced with
+    # the filepath, or filepath is appended if %f is absent
+    local handler=""
+    local view_conf="$HACKFM_DIR/conf/view.conf"
+    if [ -f "$view_conf" ]; then
+        while IFS= read -r conf_line || [ -n "$conf_line" ]; do
+            [[ -z "$conf_line" || "$conf_line" == \#* ]] && continue
+            local conf_ext="${conf_line%% *}"
+            local conf_cmd="${conf_line#*[[:space:]]}"
+            # Trim leading whitespace (config uses spaces for alignment)
+            while [[ "$conf_cmd" == [[:space:]]* ]]; do conf_cmd="${conf_cmd#?}"; done
+            if [ "${conf_ext,,}" = "$ext" ]; then
+                handler="$conf_cmd"
+                break
+            fi
+        done < "$view_conf"
+    fi
+
+    # Build and run the command - substitute %f or append filepath
+    local use_handler=0
+    if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
+        local cmd
+        if [[ "$handler" == *%f* ]]; then
+            cmd="${handler//%f/\"$filepath\"}"
+        else
+            cmd="$handler \"$filepath\""
+        fi
+
+        while IFS= read -r line; do
+            line="${line%$'\r'}"
+            # Replace form feed (page break) with empty line
+            line="${line//$'\f'/}"
+            # Strip other control chars (keep tab)
+            line=$(printf '%s' "$line" | tr '\000-\010\013-\037\177' '.')
+            __VIEWER___lines+=("$line")
+        done < <(eval "$cmd" 2>/dev/null)
+
+        [ ${#__VIEWER___lines[@]} -gt 0 ] && use_handler=1
+    fi
+
+    # Direct file read (fallback or no handler)
+    if [ $use_handler -eq 0 ]; then
+        __VIEWER___lines=()
+        # Detect binary files - check for null bytes in first 8KB
+        if LC_ALL=C grep -qP '\x00' <(head -c 8192 "$filepath" 2>/dev/null) 2>/dev/null; then
+            local size=$(stat -c '%s' "$filepath" 2>/dev/null || echo "unknown")
+            local mime=$(file -b --mime-type "$filepath" 2>/dev/null || echo "unknown")
+            __VIEWER___lines+=("[Binary file]")
+            __VIEWER___lines+=("")
+            __VIEWER___lines+=("  Type: $mime")
+            __VIEWER___lines+=("  Size: $size bytes")
+            __VIEWER___lines+=("")
+            __VIEWER___lines+=("  No viewer configured for this file type.")
+            __VIEWER___lines+=("  Add an entry to \$HACKFM_DIR/conf/view.conf to handle it.")
+        else
+            while IFS= read -r line; do
+                line="${line%$'\r'}"
+                line=$(printf '%s' "$line" | tr '\000-\010\013-\037\177' '.')
+                __VIEWER___lines+=("$line")
+            done < "$filepath"
+        fi
+    fi
 }
 
+
 __VIEWER__.display_content(){
-        # Display content with blue background
         local row=2
         for ((i=scroll; i<scroll+max_rows && i<total_lines; i++)); do
             tui.cursor.move $row 1
-            
-            # Blue background for content area
             tui.color.bg_blue
             tui.color.bright_white
-            
-            # Truncate long lines
+
+            # Truncate long lines - use cut for byte-safe truncation
             local display_line="${__VIEWER___lines[$i]}"
-            local max_len=$cols
-            if [ ${#display_line} -gt $max_len ]; then
-                display_line="${display_line:0:$max_len}..."
+            local display_len=$(printf '%s' "$display_line" | wc -m)
+            if [ "$display_len" -gt "$cols" ]; then
+                display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
+                display_line+="..."
             fi
-            
-            printf "%-${max_len}s" "$display_line"
-            tui.color.reset
+
+            printf '%s' "$display_line"
+            # Clear to end of line - handles multi-byte chars correctly
+            printf '\033[K'
+            tui.style.reset
+            ((row++)) || true
+        done
+
+        # Fill any remaining rows below content with solid blue
+        while [ $row -le $((max_rows + 1)) ]; do
+            tui.cursor.move $row 1
+            tui.color.bg_blue
+            printf '\033[K'
+            tui.style.reset
             ((row++)) || true
         done
 }
@@ -200,11 +265,14 @@ __VIEWER__.show(){
                 tui.color.bg_blue
                 tui.color.bright_white
                 local display_line="${__VIEWER___lines[$new_line_idx]}"
-                if [ ${#display_line} -gt $cols ]; then
-                    display_line="${display_line:0:$cols}..."
+                local display_len=$(printf '%s' "$display_line" | wc -m)
+                if [ "$display_len" -gt "$cols" ]; then
+                    display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
+                    display_line+="..."
                 fi
-                printf "%-${cols}s" "$display_line"
-                tui.color.reset
+                printf '%s' "$display_line"
+                printf '\033[K'
+                tui.style.reset
             fi
             
             # Reset scroll region
@@ -227,11 +295,14 @@ __VIEWER__.show(){
             tui.color.bg_blue
             tui.color.bright_white
             local display_line="${__VIEWER___lines[$scroll]}"
-            if [ ${#display_line} -gt $cols ]; then
-                display_line="${display_line:0:$cols}..."
+            local display_len=$(printf '%s' "$display_line" | wc -m)
+            if [ "$display_len" -gt "$cols" ]; then
+                display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
+                display_line+="..."
             fi
-            printf "%-${cols}s" "$display_line"
-            tui.color.reset
+            printf '%s' "$display_line"
+            printf '\033[K'
+            tui.style.reset
             
             # Reset scroll region
             tui.region.reset
