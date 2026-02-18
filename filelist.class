@@ -63,6 +63,10 @@ __FILELIST__.sort_order(){
     fi
 }
 
+__FILELIST__.type(){
+    echo "filesystem"
+}
+
 # Arrays for files and their metadata
 declare -ag __FILELIST___files=()
 declare -ag __FILELIST___types=()
@@ -71,8 +75,6 @@ declare -ag __FILELIST___times=()
 declare -ag __FILELIST___execs=()
 declare -ag __FILELIST___marked=()  # Array of marked file indices
 declare -ag __FILELIST___link_targets=()  # Symlink targets (empty for non-links)
-declare -ag __FILELIST___rendered_rows=()  # Pre-rendered row strings with colors/formatting
-
 # Sort index arrays (map display index -> actual data index)
 declare -ag __FILELIST___index_name_asc=()
 declare -ag __FILELIST___index_name_desc=()
@@ -173,11 +175,12 @@ __FILELIST__.load(){
             is_exec=1
         fi
         
-        # Format size
+        # Format size - show full number while it fits in the 9-char size column,
+        # switch to K or M only when the plain number would overflow
         local size_str
-        if [ $size -lt 1024 ]; then
-            size_str="${size}B"
-        elif [ $size -lt 1048576 ]; then
+        if [ $size -lt 1000000 ]; then
+            size_str="$size"
+        elif [ $size -lt 1000000000 ]; then
             size_str="$((size / 1024))K"
         else
             size_str="$((size / 1048576))M"
@@ -285,14 +288,15 @@ __FILELIST__._build_sort_indices(){
         
         # Numeric size for sorting (convert back from formatted)
         local size_num=0
-        if [[ "$filesize" =~ ^([0-9]+)([BKM])$ ]]; then
+        if [[ "$filesize" =~ ^([0-9]+)([KM])$ ]]; then
             local num="${BASH_REMATCH[1]}"
             local unit="${BASH_REMATCH[2]}"
             case "$unit" in
-                B) size_num=$num ;;
                 K) size_num=$((num * 1024)) ;;
                 M) size_num=$((num * 1048576)) ;;
             esac
+        elif [[ "$filesize" =~ ^([0-9]+)$ ]]; then
+            size_num="${BASH_REMATCH[1]}"
         fi
         
         # Build sort keys: type|dot|sortfield<TAB>index
@@ -609,75 +613,3 @@ __FILELIST__.get(){
     echo "${__FILELIST___files[$actual_idx]}|${__FILELIST___types[$actual_idx]}|${__FILELIST___sizes[$actual_idx]}|${__FILELIST___times[$actual_idx]}|${__FILELIST___execs[$actual_idx]}|${__FILELIST___marked[$actual_idx]}|${__FILELIST___link_targets[$actual_idx]}"
 }
 
-# Render a single file row as a formatted string (called by panel)
-# Args: index, width, is_cursor, is_active_panel
-__FILELIST__.render_row(){
-    local index=$1
-    local width=$2
-    local is_cursor=$3
-    local is_active=$4
-    
-    local filename="${__FILELIST___files[$index]}"
-    local item_type="${__FILELIST___types[$index]}"
-    local item_size="${__FILELIST___sizes[$index]}"
-    local item_time="${__FILELIST___times[$index]}"
-    local is_exec="${__FILELIST___execs[$index]}"
-    local is_marked="${__FILELIST___marked[$index]}"
-    
-    # Calculate column widths
-    local time_col_width=17
-    local size_col_width=9
-    local name_col_width=$((width - time_col_width - size_col_width - 2))
-    
-    # Set prefix character
-    local prefix=" "
-    if [ "$item_type" = "d" ]; then
-        prefix="/"
-    elif [ "$is_exec" = "1" ]; then
-        prefix="*"
-    fi
-    
-    # Truncate filename if needed
-    local max_filename_len=$((name_col_width - 1))
-    if [ ${#filename} -gt $max_filename_len ]; then
-        filename="${filename:0:$((max_filename_len - 3))}..."
-    fi
-    
-    # Manually pad filename
-    local filename_visual_len=${#filename}
-    local padding_needed=$((max_filename_len - filename_visual_len))
-    local padding=""
-    if [ $padding_needed -gt 0 ]; then
-        padding=$(printf '%*s' "$padding_needed" "")
-    fi
-    
-    # Build the row with colors
-    local row=""
-    
-    # Background color
-    row+="\033[44m"  # Blue background
-    
-    # Name column with color
-    if [ $is_cursor -eq 1 ] && [ $is_active -eq 1 ]; then
-        row+="\033[46m\033[30m\033[1m"  # Cyan bg, black text, bold
-    elif [ "$is_marked" = "1" ]; then
-        row+="\033[44m\033[33m\033[1m"  # Blue bg, yellow text, bold
-    else
-        if [ "$item_type" = "d" ]; then
-            row+="\033[37m\033[1m"  # White, bold
-        elif [ "$is_exec" = "1" ]; then
-            row+="\033[92m"  # Bright green
-        else
-            row+="\033[97m"  # Bright white
-        fi
-    fi
-    row+="${prefix}${filename}${padding}"
-    
-    # Separator and remaining columns
-    row+="\033[0m\033[44m\033[97m"  # Reset, blue bg, bright white
-    local display_time="${item_time:0:$time_col_width}"
-    row+="│$(printf "%${size_col_width}s" "$item_size")│$(printf "%-${time_col_width}s" "$display_time")"
-    row+="\033[0m"  # Reset
-    
-    echo "$row"
-}

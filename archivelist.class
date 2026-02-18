@@ -22,6 +22,19 @@ __ARCHIVELIST__.property(){
 __ARCHIVELIST__.archive_path(){
     if [ "$1" = "=" ]; then
         __ARCHIVELIST__.property archive_path = "$2"
+        # Auto-detect archive_type from filename extension
+        local _fname="${2##*/}"
+        local _detected
+        case "${_fname,,}" in
+            *.tar.gz|*.tgz)   _detected="tar.gz" ;;
+            *.tar.bz2|*.tbz2) _detected="tar.bz2" ;;
+            *.tar.xz|*.txz)   _detected="tar.xz" ;;
+            *.tar)            _detected="tar" ;;
+            *.zip)            _detected="zip" ;;
+            *.rar)            _detected="rar" ;;
+            *.7z)             _detected="7z" ;;
+        esac
+        __ARCHIVELIST__.property archive_type = "$_detected"
     else
         __ARCHIVELIST__.property archive_path
     fi
@@ -83,23 +96,6 @@ declare -ag __ARCHIVELIST___times=()
 declare -ag __ARCHIVELIST___full_paths=()
 
 # Detect archive type from filename
-__ARCHIVELIST__._detect_type(){
-    local filepath="$1"
-    local basename="${filepath##*/}"
-    local lowercase="${basename,,}"
-    
-    case "$lowercase" in
-        *.tar.gz|*.tgz)   echo "tar.gz" ;;
-        *.tar.bz2|*.tbz2) echo "tar.bz2" ;;
-        *.tar.xz|*.txz)   echo "tar.xz" ;;
-        *.tar)            echo "tar" ;;
-        *.zip)            echo "zip" ;;
-        *.rar)            echo "rar" ;;
-        *.7z)             echo "7z" ;;
-        *)                echo "unknown" ;;
-    esac
-}
-
 # Load full archive contents once (called on first load only)
 __ARCHIVELIST__._load_full_archive(){
     local archive_path=$(__ARCHIVELIST__.archive_path)
@@ -527,9 +523,9 @@ __ARCHIVELIST__.find_and_select(){
     # Not found - leave selection as is
     return 1
 }
-__ARCHIVELIST__.render_row(){ echo ""; }
 __ARCHIVELIST__.sort_order(){ echo "name_asc"; }
 __ARCHIVELIST__.marked_size(){ echo 0; }
 __ARCHIVELIST__.marked_count(){ echo 0; }
+__ARCHIVELIST__.type(){ echo "archive"; }
 __ARCHIVELIST__.get_selected(){ __ARCHIVELIST__.get_selected_item; }
 

@@ -1,6 +1,21 @@
 #!/bin/bash
 # panel.class - File panel using ba.sh
 
+# Color/style constants - captured once to avoid subshell overhead in render_row_string.
+# Each $(tui.color.*) call forks a subshell; using variables eliminates that cost
+# across the inner loop of prerender_all_rows.
+_PC_BG_BLUE=$(tui.color.bg_blue)
+_PC_BG_CYAN=$(tui.color.bg_cyan)
+_PC_BLACK=$(tui.color.black)
+_PC_WHITE=$(tui.color.white)
+_PC_CYAN=$(tui.color.cyan)
+_PC_YELLOW=$(tui.color.yellow)
+_PC_BRIGHT_GREEN=$(tui.color.bright_green)
+_PC_BRIGHT_YELLOW=$(tui.color.bright_yellow)
+_PC_BOLD=$(tui.style.bold)
+_PC_REGULAR=$(tui.style.regular)
+_PC_RESET=$(tui.style.reset)
+
 __PANEL___properties=()
 
 __PANEL__.property(){
@@ -33,20 +48,20 @@ __PANEL__.render_row_string(){
     local file_idx=$1
     local width=$(__PANEL__.width)
     local active=$(__PANEL__.active)
-    
+
     # Get active list (filelist or archivelist)
     local list=$(__PANEL__.list_source)
     local selected=$($list.selected)
-    
+
     # Get item data from list (now includes link_target)
     local filename item_type item_size item_time is_exec is_marked link_target
     IFS='|' read -r filename item_type item_size item_time is_exec is_marked link_target <<< "$($list.get $file_idx)"
-    
+
     # Calculate column widths
     local time_col_width=17
     local size_col_width=9
     local name_col_width=$((width - time_col_width - size_col_width - 2))
-    
+
     # Set prefix character
     local prefix=" "
     if [ -n "$link_target" ]; then
@@ -56,28 +71,23 @@ __PANEL__.render_row_string(){
     elif [ "$is_exec" = "1" ]; then
         prefix="*"
     fi
-    
-    # For symlinks, just use ~ prefix, no -> target in the column
+
     local display_name="$filename"
-    
+
     # Truncate display name if needed
     local max_filename_len=$((name_col_width - 1))
     if [ ${#display_name} -gt $max_filename_len ]; then
         display_name="${display_name:0:$((max_filename_len - 3))}..."
     fi
-    
+
     # Pad display name
-    local filename_visual_len=${#display_name}
-    local padding_needed=$((max_filename_len - filename_visual_len))
+    local padding_needed=$((max_filename_len - ${#display_name}))
     local padding=""
     if [ $padding_needed -gt 0 ]; then
         padding=$(printf '%*s' "$padding_needed" "")
     fi
-    
-    # Build row string with escape codes
-    local row=""
-    
-    # Determine if this row should be highlighted (cursor or marked)
+
+    # Determine highlight state
     local is_cursor=0
     local is_marked_file=0
     if [ $file_idx -eq $selected ] && [ $active -eq 1 ]; then
@@ -86,80 +96,74 @@ __PANEL__.render_row_string(){
     if [ "$is_marked" = "1" ]; then
         is_marked_file=1
     fi
-    
-    # Set row background based on state
+
+    # Build row string using _PC_ variables (avoids subshell per call - see top of file)
+    local row=""
+
+    # Background
     if [ $is_cursor -eq 1 ]; then
-        row+="$(tui.color.bg_cyan)"  # Cyan background for entire row
+        row+="$_PC_BG_CYAN"
     else
-        row+="$(tui.color.bg_blue)"  # Blue background for entire row
+        row+="$_PC_BG_BLUE"
     fi
-    
-    # Name column - set text color only
+
+    # Name column
     if [ $is_cursor -eq 1 ]; then
-        row+="$(tui.color.black)"  # Black (on cyan bg)
+        row+="$_PC_BLACK"
     elif [ $is_marked_file -eq 1 ]; then
-        row+="$(tui.color.yellow)$(tui.style.bold)"  # Yellow, bold (on blue bg)
+        row+="$_PC_YELLOW$_PC_BOLD"
+    elif [ "$item_type" = "d" ]; then
+        row+="$_PC_WHITE$_PC_BOLD"
+    elif [ "$is_exec" = "1" ]; then
+        row+="$_PC_BRIGHT_GREEN"
     else
-        if [ "$item_type" = "d" ]; then
-            row+="$(tui.color.white)$(tui.style.bold)"  # White, bold
-        elif [ "$is_exec" = "1" ]; then
-            row+="$(tui.color.bright_green)"  # Bright green
-        else
-            row+="$(tui.color.white)"  # White (not bright)
-        fi
+        row+="$_PC_WHITE"
     fi
     row+="${prefix}${display_name}${padding}"
-    
-    # Separator - turn off bold temporarily
+
+    # First separator
     if [ $is_cursor -eq 1 ]; then
-        row+="$(tui.color.black)"  # Black separator on cyan
+        row+="$_PC_BLACK"
     else
-        row+="$(tui.style.regular)"  # Turn off bold
-        row+="$(tui.color.white)"
+        row+="$_PC_REGULAR$_PC_WHITE"
     fi
     row+="│"
-    
-    # Size and time columns - restore bold for directories
+
+    # Size column
     if [ $is_cursor -eq 1 ]; then
-        row+="$(tui.color.black)"  # Black text on cyan bg
+        row+="$_PC_BLACK"
+    elif [ "$item_type" = "d" ]; then
+        row+="$_PC_WHITE$_PC_BOLD"
     else
-        if [ "$item_type" = "d" ]; then
-            row+="$(tui.color.white)$(tui.style.bold)"
-        else
-            row+="$(tui.color.white)"
-        fi
+        row+="$_PC_WHITE"
     fi
     local display_time="${item_time:0:$time_col_width}"
     row+="$(printf "%${size_col_width}s" "$item_size")"
-    
-    # Second separator - turn off bold
+
+    # Second separator
     if [ $is_cursor -eq 1 ]; then
-        row+="$(tui.color.black)"  # Black separator on cyan
+        row+="$_PC_BLACK"
     else
-        row+="$(tui.style.regular)"  # Turn off bold
-        row+="$(tui.color.white)"
+        row+="$_PC_REGULAR$_PC_WHITE"
     fi
     row+="│"
-    
-    # Time column - restore bold for directories
+
+    # Time column
     if [ $is_cursor -eq 1 ]; then
-        row+="$(tui.color.black)"  # Black on cyan
+        row+="$_PC_BLACK"
+    elif [ "$item_type" = "d" ]; then
+        row+="$_PC_WHITE$_PC_BOLD"
     else
-        if [ "$item_type" = "d" ]; then
-            row+="$(tui.color.white)$(tui.style.bold)"
-        else
-            row+="$(tui.color.white)"
-        fi
+        row+="$_PC_WHITE"
     fi
     row+="$(printf "%-${time_col_width}s" "$display_time")"
-    row+="$(tui.style.reset)"
-    
+    row+="$_PC_RESET"
+
     echo "$row"
 }
 
 # Pre-render all file rows (called when directory loads or panel becomes active)
 __PANEL__.prerender_all_rows(){
-    local list=$(__PANEL__.list_source)
     local list=$(__PANEL__.list_source)
     local count=$($list.count)
     __PANEL___rendered_rows=()
@@ -327,9 +331,6 @@ __PANEL__.archive_path(){
 
 # Draw info bar (filename or search field)
 __PANEL__.draw_info_bar(){
-    # Disable echo to prevent artifacts
-    stty -echo 2>/dev/null
-    
     local x=$(__PANEL__.x)
     local y=$(__PANEL__.y)
     local width=$(__PANEL__.width)
@@ -441,11 +442,8 @@ __PANEL__.draw_info_bar(){
         tui.color.white
         printf '%s' "$info_line"
     fi
-    
+
     tui.style.reset
-    
-    # Re-enable echo
-    stty echo 2>/dev/null
 }
 
 # Draw panel header with path
@@ -482,11 +480,10 @@ __PANEL__.draw_header(){
 
 # Render panel
 __PANEL__.render(){
-    # Hide cursor during rendering to reduce artifacts
+    stty -echo 2>/dev/null
     tui.cursor.hide
-    
+
     local list=$(__PANEL__.list_source)
-    local debug_path=$($list.path)
     local x=$(__PANEL__.x)
     local y=$(__PANEL__.y)
     local width=$(__PANEL__.width)
@@ -582,17 +579,17 @@ __PANEL__.render(){
         if [ $file_idx -ge $count ]; then
             # Fill empty rows with blue background and column separators
             tui.cursor.move $((y + 1 + i)) $((x + 1))
-            
+
             # Build empty row as string
-            local empty_row="$(tui.color.bg_blue)"
+            local empty_row="$_PC_BG_BLUE"
             empty_row+="$(printf "%${name_col_width}s" "")"
-            empty_row+="$(tui.color.white)"
+            empty_row+="$_PC_WHITE"
             empty_row+="│"
             empty_row+="$(printf "%${size_col_width}s" "")"
             empty_row+="│"
             empty_row+="$(printf "%${time_col_width}s" "")"
-            empty_row+="$(tui.style.reset)"
-            
+            empty_row+="$_PC_RESET"
+
             # Print in one go
             printf '%b' "$empty_row"
         else
@@ -601,11 +598,12 @@ __PANEL__.render(){
             printf '%b' "${__PANEL___rendered_rows[$file_idx]}"
         fi
     done
-    
+
     # Draw info bar (includes separator)
     __PANEL__.draw_info_bar
-    
+
     tui.cursor.hide
+    stty echo 2>/dev/null
 }
 
 # Quick search - interactive search mode with its own input loop
@@ -761,110 +759,90 @@ __PANEL__._do_search(){
     return 1
 }
 
+
 # Navigate in the panel (UP, DOWN, PAGEUP, PAGEDOWN, HOME, END)
 __PANEL__.navigate(){
     local list=$(__PANEL__.list_source)
     local direction="$1"
     local height=$(__PANEL__.height)
     local max_visible=$((height - 3))
-    
+
     # Get old cursor position
     local old_selected=$($list.selected)
     local old_scroll=$($list.scroll)
-    
+
     # Navigate (updates cursor position)
     $list.navigate "$direction" $max_visible
-    
+
     # Get new cursor position
     local new_selected=$($list.selected)
     local new_scroll=$($list.scroll)
-    
+
     # If nothing changed, don't redraw
     if [ $old_selected -eq $new_selected ] && [ $old_scroll -eq $new_scroll ]; then
         return
     fi
-    
-    # Disable echo and hide cursor before any drawing operations
+
     stty -echo 2>/dev/null
     tui.cursor.hide
-    
-    # Update pre-rendered rows for changed positions
+
+    # Hoist panel geometry - used in all branches below
+    local x=$(__PANEL__.x)
+    local y=$(__PANEL__.y)
+    local width=$(__PANEL__.width)
+    local count=$($list.count)
+    local scroll_delta=$((new_scroll - old_scroll))
+
+    # Update pre-rendered cache for rows whose highlight state changed
     if [ $old_selected -ne $new_selected ]; then
         __PANEL___rendered_rows[$old_selected]=$(__PANEL__.render_row_string $old_selected)
         __PANEL___rendered_rows[$new_selected]=$(__PANEL__.render_row_string $new_selected)
     fi
-    
-    # Calculate scroll delta
-    local scroll_delta=$((new_scroll - old_scroll))
-    
-    # If scroll changed by exactly 1 line, redraw all visible rows at new positions
+
     if [ $scroll_delta -eq 1 ] || [ $scroll_delta -eq -1 ]; then
-        local y=$(__PANEL__.y)
-        local x=$(__PANEL__.x)
-        
-        # Redraw all visible rows at their new positions
+        # Scrolled by one line - redraw all visible rows at their new positions
         for ((i=0; i<max_visible; i++)); do
             local file_idx=$((new_scroll + i))
-            local count=$($list.count)
-            
             tui.cursor.move $((y + 1 + i)) $((x + 1))
-            
             if [ $file_idx -ge $count ]; then
-                # Fill empty rows with blue background and column separators
-                local width=$(__PANEL__.width)
                 local time_col_width=17
                 local size_col_width=9
                 local name_col_width=$((width - time_col_width - size_col_width - 2))
-                
-                # Build empty row as string
-                local empty_row="$(tui.color.bg_blue)"
+                local empty_row
+                empty_row="$_PC_BG_BLUE"
                 empty_row+="$(printf "%${name_col_width}s" "")"
-                empty_row+="$(tui.color.white)"
-                empty_row+="│"
-                empty_row+="$(printf "%${size_col_width}s" "")"
-                empty_row+="│"
-                empty_row+="$(printf "%${time_col_width}s" "")"
-                empty_row+="$(tui.style.reset)"
-                
-                # Print in one go
+                empty_row+="$_PC_WHITE"
+                empty_row+="│$(printf "%${size_col_width}s" "")│$(printf "%${time_col_width}s" "")"
+                empty_row+="$_PC_RESET"
                 printf '%b' "$empty_row"
             else
-                # Draw row at screen position
                 printf '%b' "${__PANEL___rendered_rows[$file_idx]}"
             fi
         done
-        
-        # Update info bar with new selection
+
         __PANEL__.draw_info_bar
-        
+
     elif [ $old_scroll -ne $new_scroll ]; then
-        # Scroll changed by more than 1 - need full redraw
+        # Scroll changed by more than 1 (page up/down, home/end) - full redraw
         __PANEL__.render
+
     else
-        # Scroll didn't change - just redraw the 2 affected visible rows
-        local y=$(__PANEL__.y)
-        local x=$(__PANEL__.x)
-        local width=$(__PANEL__.width)
-        
-        # Redraw old cursor row (if visible)
+        # No scroll change - just redraw the 2 affected rows
         local old_visible_row=$((old_selected - old_scroll))
         if [ $old_visible_row -ge 0 ] && [ $old_visible_row -lt $max_visible ]; then
             tui.cursor.move $((y + 1 + old_visible_row)) $((x + 1))
             printf '%b' "${__PANEL___rendered_rows[$old_selected]}"
         fi
-        
-        # Redraw new cursor row (if visible)
+
         local new_visible_row=$((new_selected - new_scroll))
         if [ $new_visible_row -ge 0 ] && [ $new_visible_row -lt $max_visible ]; then
             tui.cursor.move $((y + 1 + new_visible_row)) $((x + 1))
             printf '%b' "${__PANEL___rendered_rows[$new_selected]}"
         fi
-        
-        # Update info bar with new selection
+
         __PANEL__.draw_info_bar
     fi
-    
-    # Re-enable echo
+
     stty echo 2>/dev/null
 }
 
@@ -915,44 +893,18 @@ __PANEL__.reload(){
 }
 
 # Check if filename is an archive
-__PANEL__._is_archive(){
-    local filename="$1"
-    local lowercase="${filename,,}"  # Convert to lowercase
-    case "$lowercase" in
-        *.tar.gz|*.tgz|*.tar.bz2|*.tbz2|*.tar.xz|*.txz|*.tar|*.zip|*.rar|*.7z)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
 # Enter archive view mode
 __PANEL__._enter_archive(){
     local list=$(__PANEL__.list_source)
     local archive_file="$1"
     local archive_fullpath="$($list.path)/$archive_file"
     
-    # Detect archive type
-    local archive_type
-    case "${archive_file,,}" in
-        *.tar.gz|*.tgz)   archive_type="tar.gz" ;;
-        *.tar.bz2|*.tbz2) archive_type="tar.bz2" ;;
-        *.tar.xz|*.txz)   archive_type="tar.xz" ;;
-        *.tar)            archive_type="tar" ;;
-        *.zip)            archive_type="zip" ;;
-        *.rar)            archive_type="rar" ;;
-        *.7z)             archive_type="7z" ;;
-    esac
-    
     # Create archivelist object as a separate object
     archivelist __PANEL__.archive_list || return 1
     
-    # Initialize archive
+    # Initialize archive (archive_path setter auto-detects archive_type)
     __PANEL__.archive_list.archive_path = "$archive_fullpath" || return 1
     __PANEL__.archive_list.internal_path = "" || return 1
-    __PANEL__.archive_list.archive_type = "$archive_type" || return 1
     __PANEL__.archive_list.load || return 1
     
     # Mark panel as in archive mode
@@ -1051,30 +1003,25 @@ __PANEL__.enter(){
         return
     fi
     
-    # Normal filesystem mode
-    if [ "$filetype" = "d" ] && [ "$filename" != "<empty>" ]; then
+    local list_type=$($list.type)
+
+    if [ "$filename" = "<empty>" ]; then
+        __PANEL__.enter_result = ""
+    elif [ "$filetype" = "d" ]; then
+        # Directory navigation - works the same regardless of list type
         if [ "$filename" = ".." ]; then
-            # Going up - remember current directory name
-            local current_dir="${path##*/}"  # basename
-            local parent_dir="${path%/*}"    # dirname
-            
-            # Handle root directory edge case
-            if [ -z "$parent_dir" ]; then
-                parent_dir="/"
-            fi
-            
+            local current_dir="${path##*/}"
+            local parent_dir="${path%/*}"
+            [ -z "$parent_dir" ] && parent_dir="/"
+
             $list.path = "$parent_dir"
             cd "$parent_dir" 2>/dev/null || true
-            
-            # Find and select the directory we just left
+
             local height=$(__PANEL__.height)
             local visible_rows=$((height - 3))
             $list.find_and_select "$current_dir" $visible_rows
-            
-            # Pre-render all rows AFTER cursor is positioned
             __PANEL__.prerender_all_rows
         else
-            # Going into subdirectory
             local new_path
             if [ "$path" = "/" ]; then
                 new_path="/$filename"
@@ -1083,24 +1030,26 @@ __PANEL__.enter(){
             fi
             $list.path = "$new_path"
             cd "$new_path" 2>/dev/null || true
-            
-            # Pre-render all rows with new directory
             __PANEL__.prerender_all_rows
         fi
-        
-        # Render panel with new directory
+
         __PANEL__.render
         __PANEL__.enter_result = "ok"
-    elif [ "$filetype" = "f" ] && [ "$filename" != "<empty>" ]; then
-        # Check if it's an archive file
-        if __PANEL__._is_archive "$filename"; then
+    elif [ "$filetype" = "f" ] && [ "$list_type" = "filesystem" ]; then
+        # Regular file on filesystem - check if it's an archive by trying to detect its type
+        local probe_type
+        archivelist __PANEL__.archive_list
+        __PANEL__.archive_list.archive_path = "$path/$filename"
+        probe_type=$(__PANEL__.archive_list.archive_type)
+
+        if [ -n "$probe_type" ]; then
+            # archive_path setter recognised the extension - enter archive mode
             __PANEL__._enter_archive "$filename"
             __PANEL__.render
             __PANEL__.enter_result = "ok"
         else
-            # Regular file - check if executable
+            # Plain file - open or execute
             local filepath="$path/$filename"
-            
             if [ -x "$filepath" ]; then
                 __PANEL__.enter_result = "execute:$filepath"
             else
@@ -1108,7 +1057,6 @@ __PANEL__.enter(){
             fi
         fi
     else
-        # Special item or empty
         __PANEL__.enter_result = ""
     fi
 }

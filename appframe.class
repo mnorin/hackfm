@@ -237,9 +237,3 @@ __APPFRAME__.draw_frame_blue(){
     __APPFRAME__.fill_main_blue
     __APPFRAME__.draw_fkeys "$@"
 }
-
-# Redraw just title and fkeys (not main area)
-__APPFRAME__.refresh_frame(){
-    __APPFRAME__.draw_title
-    __APPFRAME__.draw_fkeys "$@"
-}
