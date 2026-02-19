@@ -795,26 +795,55 @@ show_menu() {
 view_file() {
     # Reset colors first (in case we have reverse video or colors active from panel)
     tui.color.reset
-    
-    # Get selected item
-    local filename filetype path
-    IFS='|' read -r filename filetype path <<< "$(get_selected_item)"
-    
-    # Only view files
-    if [ "$filetype" != "f" ] || [ "$filename" = "<empty>" ]; then
-        return
+
+    local active_panel=$(get_active_panel)
+    local in_archive=$($active_panel.in_archive)
+
+    if [ "$in_archive" = "1" ]; then
+        # File is inside an archive - get clean internal path from archivelist directly
+        local arch_list=$($active_panel.list_source)
+        local arch_filename arch_filetype arch_path
+        IFS='|' read -r arch_filename arch_filetype arch_path <<< "$($arch_list.get_selected_item)"
+
+        # Only view files
+        if [ "$arch_filetype" != "f" ] || [ "$arch_filename" = "<empty>" ] || [ "$arch_filename" = ".." ]; then
+            return
+        fi
+
+        local tmp_dir=$(mktemp -d)
+        local tmp_file="$tmp_dir/$arch_filename"
+
+        # Show extracting status
+        file_dialog.show_status "Extracting" "Extracting $arch_filename..."
+
+        # Extract the single file
+        $arch_list.extract_files "$tmp_dir" "$arch_path"
+
+        if [ -f "$tmp_file" ] && [ -r "$tmp_file" ]; then
+            file_viewer.open "$tmp_file"
+        fi
+
+        rm -rf "$tmp_dir"
+    else
+        # Regular filesystem file
+        local filename filetype path
+        IFS='|' read -r filename filetype path <<< "$(get_selected_item)"
+
+        # Only view files
+        if [ "$filetype" != "f" ] || [ "$filename" = "<empty>" ]; then
+            return
+        fi
+
+        local filepath="$path/$filename"
+
+        # Check readable
+        if [ ! -f "$filepath" ] || [ ! -r "$filepath" ]; then
+            return
+        fi
+
+        file_viewer.open "$filepath"
     fi
-    
-    local filepath="$path/$filename"
-    
-    # Check readable
-    if [ ! -f "$filepath" ] || [ ! -r "$filepath" ]; then
-        return
-    fi
-    
-    # Use viewer class
-    file_viewer.open "$filepath"
-    
+
     # Return to file manager
     draw_screen
 }
