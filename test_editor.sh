@@ -7,6 +7,7 @@
 . ./tui/color.class
 . ./tui/box.class
 . ./tui/input.class
+. ./tui/style.class
 
 # Load fixed classes
 . appframe.h
