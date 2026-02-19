@@ -138,6 +138,11 @@ reload_active_panel() {
     $panel.reload
 }
 
+reload_other_panel() {
+    local panel=$(get_other_panel)
+    $panel.reload
+}
+
 # Reload both panels' directories
 reload_both_panels() {
     left_panel.reload
@@ -986,6 +991,178 @@ delete_item() {
     fi
 }
 
+# Extract files from archive (F5 when active panel is in an archive)
+extract_item() {
+    local active_panel=$(get_active_panel)
+    local active_list=$($active_panel.list_source)
+    local other_list=$($(get_other_panel).list_source)
+    local dest_path=$($other_list.path)
+
+    local archive_path=$($active_panel.archive_path)
+    local archive_name=$(basename "$archive_path")
+
+    # Get cursor item
+    local filename filetype fpath
+    IFS='|' read -r filename filetype fpath <<< "$($active_list.get_selected_item)"
+
+    # Skip special entries
+    if [ "$filename" = ".." ] || [ "$filename" = "<empty>" ]; then
+        return
+    fi
+
+    # Build list of files to extract - for now archivelist has no multi-select,
+    # so we extract the file/dir under cursor
+    local files_to_extract=("$fpath")
+    local extract_label="\"$filename\""
+
+    # Calculate dialog dimensions
+    local size=$(tui.screen.size)
+    local rows=${size% *}
+    local cols=${size#* }
+    local dialog_width=60
+    [ $dialog_width -gt $((cols - 4)) ] && dialog_width=$((cols - 4))
+    local dialog_height=9
+    local dialog_row=$(( (rows - dialog_height) / 2 ))
+    local dialog_col=$(( (cols - dialog_width) / 2 ))
+
+    # Draw dialog shadow
+    tui.color.bg_black
+    for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
+        tui.cursor.move $r $((dialog_col + 2))
+        printf "%$((dialog_width))s" ""
+    done
+    tui.color.reset
+
+    # Draw dialog box
+    tui.color.bg_white
+    tui.color.black
+    for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
+        tui.cursor.move $r $dialog_col
+        printf "%${dialog_width}s" ""
+    done
+
+    tui.cursor.move $dialog_row $dialog_col
+    tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
+
+    # Title
+    tui.cursor.move $dialog_row $((dialog_col + 2))
+    tui.color.bg_white
+    tui.color.black
+    tui.color.bold
+    printf " Extract "
+    tui.color.reset
+
+    # Source label
+    tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
+    tui.color.bg_white
+    tui.color.black
+    printf "%-$((dialog_width - 4))s" "From: $archive_name  $extract_label"
+
+    # Destination label
+    tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2))
+    printf "%-$((dialog_width - 4))s" "To:"
+
+    # Destination input field (editable)
+    local input="$dest_path"
+    local cursor_pos=${#input}
+    local field_width=$((dialog_width - 4))
+
+    tui.cursor.show
+    while true; do
+        # Redraw input field
+        tui.cursor.move $((dialog_row + 4)) $((dialog_col + 2))
+        tui.color.bg_cyan
+        tui.color.black
+        # Show end of path if longer than field
+        local display_input="$input"
+        if [ ${#display_input} -gt $field_width ]; then
+            display_input="${display_input:$((${#display_input} - field_width))}"
+        fi
+        printf "%-${field_width}s" "$display_input"
+        tui.color.reset
+
+        # Draw buttons
+        tui.cursor.move $((dialog_row + 6)) $((dialog_col + dialog_width/2 - 9))
+        tui.color.bg_cyan
+        tui.color.black
+        tui.color.bold
+        printf "[ Extract ]"
+        tui.color.reset
+        tui.color.bg_white
+        tui.color.black
+        printf "   "
+        tui.color.bold
+        printf "[Cancel]"
+        tui.color.reset
+
+        # Position cursor in input field
+        local visible_cursor=$cursor_pos
+        if [ ${#input} -gt $field_width ]; then
+            visible_cursor=$((field_width))
+        fi
+        tui.cursor.move $((dialog_row + 4)) $((dialog_col + 2 + visible_cursor))
+
+        local key=$(tui.input.key)
+        case "$key" in
+            ENTER)
+                tui.cursor.hide
+                break
+                ;;
+            ESC)
+                tui.cursor.hide
+                dialog_cleanup
+                draw_screen
+                return
+                ;;
+            BACKSPACE)
+                if [ $cursor_pos -gt 0 ]; then
+                    input="${input:0:$((cursor_pos-1))}${input:$cursor_pos}"
+                    cursor_pos=$((cursor_pos - 1))
+                fi
+                ;;
+            DELETE)
+                if [ $cursor_pos -lt ${#input} ]; then
+                    input="${input:0:$cursor_pos}${input:$((cursor_pos+1))}"
+                fi
+                ;;
+            LEFT)
+                [ $cursor_pos -gt 0 ] && cursor_pos=$((cursor_pos - 1)) ;;
+            RIGHT)
+                [ $cursor_pos -lt ${#input} ] && cursor_pos=$((cursor_pos + 1)) ;;
+            HOME) cursor_pos=0 ;;
+            END)  cursor_pos=${#input} ;;
+            *)
+                if [ ${#key} -eq 1 ]; then
+                    input="${input:0:$cursor_pos}${key}${input:$cursor_pos}"
+                    cursor_pos=$((cursor_pos + 1))
+                fi
+                ;;
+        esac
+    done
+
+    dialog_cleanup
+
+    # Do the extraction
+    local dest="$input"
+    if [ -z "$dest" ]; then
+        draw_screen
+        return
+    fi
+
+    # Get the archivelist object from the active panel
+    local arch_list=$($active_panel.list_source)
+    local result
+    $arch_list.extract_files "$dest" "${files_to_extract[@]}"
+    result=$?
+
+    reload_other_panel
+    draw_screen
+
+    if [ $result -ne 0 ]; then
+        show_error "Extraction failed"
+    fi
+}
+
 # Copy file/directory (F5)
 copy_item() {
     local active_list=$(get_active_panel).list
@@ -1678,6 +1855,14 @@ main_loop() {
                 fi
                 ;;
                 
+            # Ctrl+R - reload active panel
+            CTRL-R)
+                if [ $PANELS_VISIBLE -eq 1 ]; then
+                    reload_active_panel
+                    draw_screen
+                fi
+                ;;
+
             # Ctrl+U - clear command line (standard shell behavior)
             CTRL-U)
                 cmd.clear
@@ -1770,7 +1955,13 @@ RCFILE
                 ;;
             F5)
                 if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    copy_item
+                    active_panel=$(get_active_panel)
+                    in_archive=$($active_panel.in_archive)
+                    if [ "$in_archive" = "1" ]; then
+                        extract_item
+                    else
+                        copy_item
+                    fi
                 fi
                 ;;
             F6)

@@ -33,6 +33,8 @@ __ARCHIVELIST__.archive_path(){
             *.zip)            _detected="zip" ;;
             *.rar)            _detected="rar" ;;
             *.7z)             _detected="7z" ;;
+            *.deb)            _detected="deb" ;;
+            *.rpm)            _detected="rpm" ;;
         esac
         __ARCHIVELIST__.property archive_type = "$_detected"
     else
@@ -95,6 +97,20 @@ declare -ag __ARCHIVELIST___sizes=()
 declare -ag __ARCHIVELIST___times=()
 declare -ag __ARCHIVELIST___full_paths=()
 
+# Format a byte count the same way filelist does
+__ARCHIVELIST__._format_size(){
+    local size="$1"
+    if [[ ! "$size" =~ ^[0-9]+$ ]]; then
+        echo ""
+    elif [ "$size" -lt 1000000 ]; then
+        echo "$size"
+    elif [ "$size" -lt 1000000000 ]; then
+        echo "$((size / 1024))K"
+    else
+        echo "$((size / 1048576))M"
+    fi
+}
+
 # Detect archive type from filename
 # Load full archive contents once (called on first load only)
 __ARCHIVELIST__._load_full_archive(){
@@ -109,16 +125,7 @@ __ARCHIVELIST__._load_full_archive(){
             while IFS= read -r line; do
                 local size=$(echo "$line" | awk '{print $3}')
                 local filename=$(echo "$line" | awk '{$1=$2=$3=$4=$5=""; sub(/^[ \t]+/, ""); print}')
-                
-                local size_str=""
-                if [ "$size" -lt 1024 ]; then
-                    size_str="${size}B"
-                elif [ "$size" -lt 1048576 ]; then
-                    size_str="$((size / 1024))K"
-                else
-                    size_str="$((size / 1048576))M"
-                fi
-                
+                local size_str=$(__ARCHIVELIST__._format_size "$size")
                 __ARCHIVELIST___all_entries+=("$filename|$size_str")
             done < <(tar -tvf "$archive_path" 2>/dev/null)
             ;;
@@ -152,15 +159,7 @@ __ARCHIVELIST__._load_full_archive(){
                 # Skip if size is not numeric
                 [[ ! "$size" =~ ^[0-9]+$ ]] && continue
                 
-                local size_str=""
-                if [ "$size" -lt 1024 ]; then
-                    size_str="${size}B"
-                elif [ "$size" -lt 1048576 ]; then
-                    size_str="$((size / 1024))K"
-                else
-                    size_str="$((size / 1048576))M"
-                fi
-                
+                local size_str=$(__ARCHIVELIST__._format_size "$size")
                 [ -n "$filename" ] && __ARCHIVELIST___all_entries+=("$filename|$size_str")
             done < <(unzip -l "$archive_path" 2>/dev/null)
             ;;
@@ -237,22 +236,39 @@ __ARCHIVELIST__._load_full_archive(){
                         filename="${filename}/"
                     fi
                     
-                    # Format size
-                    local size_str=""
-                    if [[ "$size" =~ ^[0-9]+$ ]]; then
-                        if [ "$size" -lt 1024 ]; then
-                            size_str="${size}B"
-                        elif [ "$size" -lt 1048576 ]; then
-                            size_str="$((size / 1024))K"
-                        else
-                            size_str="$((size / 1048576))M"
-                        fi
-                    fi
-                    
+                    local size_str=$(__ARCHIVELIST__._format_size "$size")
                     __ARCHIVELIST___all_entries+=("$filename|$size_str")
                     
                 done < <($cmd l "$archive_path" 2>/dev/null)
                 
+            fi
+            ;;
+        deb)
+            # dpkg-deb --contents: permissions owner size date time ./path
+            while IFS= read -r line; do
+                local size=$(echo "$line" | awk '{print $3}')
+                local filename=$(echo "$line" | awk '{print $6}')
+                # Strip leading ./ from paths
+                filename="${filename#./}"
+                # Skip root entry
+                { [ -z "$filename" ] || [ "$filename" = "." ]; } && continue
+                # Trailing / marks directories - keep it for type detection
+                local size_str=$(__ARCHIVELIST__._format_size "$size")
+                __ARCHIVELIST___all_entries+=("$filename|$size_str")
+            done < <(dpkg-deb --contents "$archive_path" 2>/dev/null)
+            ;;
+        rpm)
+            # rpm -qlp lists files; rpm -qp --queryformat gives sizes
+            if command -v rpm &>/dev/null; then
+                while IFS= read -r line; do
+                    local size="${line%% *}"
+                    local filename="${line#* }"
+                    # Strip leading /
+                    filename="${filename#/}"
+                    [ -z "$filename" ] && continue
+                    local size_str=$(__ARCHIVELIST__._format_size "$size")
+                    __ARCHIVELIST___all_entries+=("$filename|$size_str")
+                done < <(rpm -qp --queryformat '[%{FILESIZES} %{FILENAMES}\n]' "$archive_path" 2>/dev/null)
             fi
             ;;
     esac
@@ -413,6 +429,104 @@ __ARCHIVELIST__.navigate(){
             __ARCHIVELIST__.scroll = $scroll
             ;;
     esac
+}
+
+# Extract files to destination directory
+# $1 = destination directory
+# $2... = internal paths to extract (empty = extract all)
+__ARCHIVELIST__.extract_files(){
+    local dest="$1"
+    shift
+    local files=("$@")
+
+    local archive_path=$(__ARCHIVELIST__.archive_path)
+    local archive_type=$(__ARCHIVELIST__.archive_type)
+
+    mkdir -p "$dest" 2>/dev/null || return 1
+
+    if [ ${#files[@]} -eq 0 ]; then
+        # Extract everything
+        case "$archive_type" in
+            tar|tar.gz|tar.bz2|tar.xz)
+                tar -xf "$archive_path" -C "$dest" 2>/dev/null ;;
+            zip)
+                unzip -q "$archive_path" -d "$dest" 2>/dev/null ;;
+            rar)
+                unrar x -y "$archive_path" "$dest/" 2>/dev/null ;;
+            7z)
+                local cmd=""
+                command -v 7z &>/dev/null && cmd="7z"
+                command -v 7za &>/dev/null && [ -z "$cmd" ] && cmd="7za"
+                command -v 7zr &>/dev/null && [ -z "$cmd" ] && cmd="7zr"
+                [ -n "$cmd" ] && $cmd x "$archive_path" -o"$dest" -y 2>/dev/null ;;
+            deb)
+                dpkg-deb -x "$archive_path" "$dest" 2>/dev/null ;;
+            rpm)
+                if command -v rpm2cpio &>/dev/null && command -v cpio &>/dev/null; then
+                    ( cd "$dest" && rpm2cpio "$archive_path" | cpio -idm --quiet 2>/dev/null )
+                fi ;;
+        esac
+    else
+        # Extract specific files
+        case "$archive_type" in
+            tar|tar.gz|tar.bz2|tar.xz)
+                local tmp=$(mktemp -d)
+                tar -xf "$archive_path" -C "$tmp" "${files[@]}" 2>/dev/null
+                for f in "${files[@]}"; do
+                    local src="$tmp/${f#/}"
+                    [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
+                done
+                rm -rf "$tmp" ;;
+            zip)
+                local tmp=$(mktemp -d)
+                unzip -q "$archive_path" "${files[@]}" -d "$tmp" 2>/dev/null
+                for f in "${files[@]}"; do
+                    local src="$tmp/${f#/}"
+                    [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
+                done
+                rm -rf "$tmp" ;;
+            rar)
+                local tmp=$(mktemp -d)
+                for f in "${files[@]}"; do
+                    unrar x -y "$archive_path" "$f" "$tmp/" 2>/dev/null
+                    local src="$tmp/${f#/}"
+                    [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
+                done
+                rm -rf "$tmp" ;;
+            7z)
+                local cmd=""
+                command -v 7z &>/dev/null && cmd="7z"
+                command -v 7za &>/dev/null && [ -z "$cmd" ] && cmd="7za"
+                command -v 7zr &>/dev/null && [ -z "$cmd" ] && cmd="7zr"
+                if [ -n "$cmd" ]; then
+                    local tmp=$(mktemp -d)
+                    for f in "${files[@]}"; do
+                        $cmd x "$archive_path" -o"$tmp" -y "$f" 2>/dev/null
+                        local src="$tmp/${f#/}"
+                        [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
+                    done
+                    rm -rf "$tmp"
+                fi ;;
+            deb)
+                local tmp=$(mktemp -d)
+                dpkg-deb -x "$archive_path" "$tmp" 2>/dev/null
+                for f in "${files[@]}"; do
+                    local src="$tmp/${f#/}"
+                    [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
+                done
+                rm -rf "$tmp" ;;
+            rpm)
+                if command -v rpm2cpio &>/dev/null && command -v cpio &>/dev/null; then
+                    local tmp=$(mktemp -d)
+                    ( cd "$tmp" && rpm2cpio "$archive_path" | cpio -idm --quiet 2>/dev/null )
+                    for f in "${files[@]}"; do
+                        local src="$tmp/${f#/}"
+                        [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
+                    done
+                    rm -rf "$tmp"
+                fi ;;
+        esac
+    fi
 }
 
 # Cleanup - clear all arrays to free memory
