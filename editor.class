@@ -141,9 +141,6 @@ declare -ag __EDITOR___lines=()
 # Clipboard buffer
 declare -ag __EDITOR___clipboard=()
 
-# Internal appframe instance
-# REMOVED: __EDITOR___appframe_created=0  (now a property)
-
 # Terminal dimensions
 EDITOR_VIEWPORT_HEIGHT=20
 EDITOR_VIEWPORT_WIDTH=80
@@ -775,14 +772,12 @@ __EDITOR__.delete_selection(){
 
 # Show editor (blocking - runs until user exits)
 __EDITOR__.show(){
-    # Create appframe if not already created
-    local appframe_created=$(__EDITOR__.appframe_created)
-    if [ $appframe_created -eq 0 ]; then
+    # Lazy-init appframe and dialog on first call (tui_dialog not available at source time)
+    if ! declare -F __EDITOR___dialog.show_confirm &>/dev/null; then
         appframe __EDITOR___appframe
         tui_dialog __EDITOR___dialog
-        __EDITOR__.appframe_created = 1
     fi
-    
+
     # Get filepath for title
     local filepath=$(__EDITOR__.filepath)
     local filename=$(basename "$filepath")

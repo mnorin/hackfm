@@ -391,6 +391,61 @@ __DIALOG__.show_confirm(){
 }
 
 # Show message dialog - press any key to close
+# Usage: dialog.show_status "Title" "Message text"
+# Like show_message but returns immediately - use to show progress/status while work is happening
+__DIALOG__.show_status(){
+    local title="$1"
+    local message="$2"
+
+    local size=$(tui.screen.size)
+    local rows=${size% *}
+    local cols=${size#* }
+
+    local dialog_width=50
+    [ ${#message} -gt 44 ] && dialog_width=$(( ${#message} + 6 ))
+    [ $dialog_width -gt $((cols - 4)) ] && dialog_width=$((cols - 4))
+    local dialog_height=5
+    local dialog_row=$(( (rows - dialog_height) / 2 ))
+    local dialog_col=$(( (cols - dialog_width) / 2 ))
+
+    # Shadow
+    tui.color.bg_black
+    for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
+        tui.cursor.move $r $((dialog_col + 2))
+        printf "%$((dialog_width))s" ""
+    done
+    tui.color.reset
+
+    # Box background
+    tui.color.bg_white
+    tui.color.black
+    for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
+        tui.cursor.move $r $dialog_col
+        printf "%${dialog_width}s" ""
+    done
+
+    tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
+
+    # Title
+    tui.cursor.move $dialog_row $((dialog_col + 2))
+    tui.color.bg_white
+    tui.color.black
+    tui.color.bold
+    printf " %s " "$title"
+    tui.color.reset
+
+    # Message centered
+    tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
+    tui.color.bg_white
+    tui.color.black
+    local msg_len=${#message}
+    local padding=$(( (dialog_width - 4 - msg_len) / 2 ))
+    [ $padding -lt 0 ] && padding=0
+    printf "%${padding}s%s" "" "$message"
+    tui.color.reset
+    # No key wait - returns immediately
+}
+
 # Usage: dialog.show_message "Title" "Message text"
 __DIALOG__.show_message(){
     local title="$1"

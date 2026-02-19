@@ -1068,8 +1068,11 @@ __PANEL__.enter(){
                 __PANEL__._enter_archive "$filename"
                 __PANEL__.render
                 __PANEL__.enter_result = "ok"
+            elif [ -x "$filepath" ]; then
+                # Executable file - run it
+                __PANEL__.enter_result = "execute:$filepath"
             else
-                # Plain file - no handler, not an archive, ignore executable bit
+                # Plain file - no handler, not an archive, not executable
                 __PANEL__.enter_result = ""
             fi
         fi

@@ -244,18 +244,24 @@ __ARCHIVELIST__._load_full_archive(){
             fi
             ;;
         deb)
-            # dpkg-deb --contents: permissions owner size date time ./path
+            # List control scripts under DEBIAN/ prefix
             while IFS= read -r line; do
                 local size=$(echo "$line" | awk '{print $3}')
                 local filename=$(echo "$line" | awk '{print $6}')
-                # Strip leading ./ from paths
                 filename="${filename#./}"
-                # Skip root entry
                 { [ -z "$filename" ] || [ "$filename" = "." ]; } && continue
-                # Trailing / marks directories - keep it for type detection
+                local size_str=$(__ARCHIVELIST__._format_size "$size")
+                __ARCHIVELIST___all_entries+=("DEBIAN/$filename|$size_str")
+            done < <(dpkg-deb --ctrl-tarfile "$archive_path" 2>/dev/null | tar -tv 2>/dev/null)
+            # List data files
+            while IFS= read -r line; do
+                local size=$(echo "$line" | awk '{print $3}')
+                local filename=$(echo "$line" | awk '{print $6}')
+                filename="${filename#./}"
+                { [ -z "$filename" ] || [ "$filename" = "." ]; } && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$size")
                 __ARCHIVELIST___all_entries+=("$filename|$size_str")
-            done < <(dpkg-deb --contents "$archive_path" 2>/dev/null)
+            done < <(dpkg-deb --fsys-tarfile "$archive_path" 2>/dev/null | tar -tv 2>/dev/null)
             ;;
         rpm)
             # rpm -qlp lists files; rpm -qp --queryformat gives sizes
@@ -460,6 +466,9 @@ __ARCHIVELIST__.extract_files(){
                 command -v 7zr &>/dev/null && [ -z "$cmd" ] && cmd="7zr"
                 [ -n "$cmd" ] && $cmd x "$archive_path" -o"$dest" -y 2>/dev/null ;;
             deb)
+                mkdir -p "$dest/DEBIAN"
+                dpkg-deb --ctrl-tarfile "$archive_path" 2>/dev/null | \
+                    tar -xf - -C "$dest/DEBIAN" 2>/dev/null
                 dpkg-deb -x "$archive_path" "$dest" 2>/dev/null ;;
             rpm)
                 if command -v rpm2cpio &>/dev/null && command -v cpio &>/dev/null; then
@@ -509,9 +518,19 @@ __ARCHIVELIST__.extract_files(){
                 fi ;;
             deb)
                 local tmp=$(mktemp -d)
-                dpkg-deb -x "$archive_path" "$tmp" 2>/dev/null
                 for f in "${files[@]}"; do
-                    local src="$tmp/${f#/}"
+                    if [[ "$f" == DEBIAN/* ]]; then
+                        # Control file - extract from ctrl-tarfile
+                        local ctrl_name="${f#DEBIAN/}"
+                        dpkg-deb --ctrl-tarfile "$archive_path" 2>/dev/null | \
+                            tar -xf - -C "$tmp" "./$ctrl_name" 2>/dev/null
+                        local src="$tmp/$ctrl_name"
+                    else
+                        # Data file - extract from fsys-tarfile
+                        dpkg-deb --fsys-tarfile "$archive_path" 2>/dev/null | \
+                            tar -xf - -C "$tmp" "./$f" 2>/dev/null
+                        local src="$tmp/$f"
+                    fi
                     [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
                 done
                 rm -rf "$tmp" ;;

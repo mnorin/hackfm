@@ -100,6 +100,20 @@ MENU_CREATED=0
 # HELPER FUNCTIONS (NEW - to eliminate duplication)
 # ============================================================================
 
+# Read a value from hackfm.conf
+# Usage: conf_get KEY [DEFAULT]
+conf_get() {
+    local key="$1"
+    local default="${2:-}"
+    local conf="$HACKFM_DIR/conf/hackfm.conf"
+    if [ -f "$conf" ]; then
+        local val
+        val=$(grep -m1 "^${key}=" "$conf" 2>/dev/null | cut -d= -f2-)
+        [ -n "$val" ] && echo "$val" && return
+    fi
+    echo "$default"
+}
+
 # Get the currently active panel's list object name
 # Get the currently active panel object name
 get_active_panel() {
@@ -556,21 +570,51 @@ open_item() {
         # No handler or program not found - do nothing
 
     elif [[ "$action" == execute:* ]]; then
-        # Truly executable script/binary (no ext.conf entry) - run it
         local filepath="${action#*:}"
-        tui.screen.main
-        stty sane
+        local in_terminal=$(conf_get open_execute_in_terminal 0)
 
-        trap - ERR
-        set +e
-        "$filepath"
-        set -e
-        trap '__ba_err_report $? $LINENO' ERR
+        if [ "$in_terminal" = "1" ]; then
+            # Open a new terminal window in the file's directory, run program there
+            local filedir=$(dirname "$filepath")
+            local terminal=""
+            for t in x-terminal-emulator xterm gnome-terminal konsole xfce4-terminal; do
+                command -v "$t" &>/dev/null && terminal="$t" && break
+            done
+            if [ -n "$terminal" ]; then
+                local cmd="cd $(printf '%q' "$filedir") && $(printf '%q' "$filepath"); echo; read -rsn1 -p '--- Press any key ---'"
+                case "$terminal" in
+                    gnome-terminal) "$terminal" --working-directory="$filedir" -- bash -c "$cmd" &>/dev/null & ;;
+                    *)              "$terminal" -e "bash -c $(printf '%q' "$cmd")" &>/dev/null & ;;
+                esac
+            fi
+            # Panels stay visible - no screen switch needed
+        else
+            # Run inline on primary screen (original behaviour, accessible via Ctrl-O)
+            tui.screen.main
+            stty sane
 
-        tui.screen.alt
-        main_frame.setup
-        reload_both_panels
-        draw_screen
+            local filedir=$(dirname "$filepath")
+            local filename=$(basename "$filepath")
+            echo "${USER}@$(hostname):${filedir}\$ ${filename}"
+            tui.cursor.show
+
+            trap - ERR
+            set +e
+            "$filepath"
+            local _exit=$?
+            set -e
+            trap '__ba_err_report $? $LINENO' ERR
+
+            echo ""
+            echo "--- Program exited with code $_exit. Press any key ---"
+            read -rsn1
+            tui.cursor.hide
+
+            tui.screen.alt
+            main_frame.setup
+            reload_both_panels
+            draw_screen
+        fi
     fi
     # action="" or "ok" - nothing to do
 }
@@ -751,26 +795,55 @@ show_menu() {
 view_file() {
     # Reset colors first (in case we have reverse video or colors active from panel)
     tui.color.reset
-    
-    # Get selected item
-    local filename filetype path
-    IFS='|' read -r filename filetype path <<< "$(get_selected_item)"
-    
-    # Only view files
-    if [ "$filetype" != "f" ] || [ "$filename" = "<empty>" ]; then
-        return
+
+    local active_panel=$(get_active_panel)
+    local in_archive=$($active_panel.in_archive)
+
+    if [ "$in_archive" = "1" ]; then
+        # File is inside an archive - get clean internal path from archivelist directly
+        local arch_list=$($active_panel.list_source)
+        local arch_filename arch_filetype arch_path
+        IFS='|' read -r arch_filename arch_filetype arch_path <<< "$($arch_list.get_selected_item)"
+
+        # Only view files
+        if [ "$arch_filetype" != "f" ] || [ "$arch_filename" = "<empty>" ] || [ "$arch_filename" = ".." ]; then
+            return
+        fi
+
+        local tmp_dir=$(mktemp -d)
+        local tmp_file="$tmp_dir/$arch_filename"
+
+        # Show extracting status
+        file_dialog.show_status "Extracting" "Extracting $arch_filename..."
+
+        # Extract the single file
+        $arch_list.extract_files "$tmp_dir" "$arch_path"
+
+        if [ -f "$tmp_file" ] && [ -r "$tmp_file" ]; then
+            file_viewer.open "$tmp_file"
+        fi
+
+        rm -rf "$tmp_dir"
+    else
+        # Regular filesystem file
+        local filename filetype path
+        IFS='|' read -r filename filetype path <<< "$(get_selected_item)"
+
+        # Only view files
+        if [ "$filetype" != "f" ] || [ "$filename" = "<empty>" ]; then
+            return
+        fi
+
+        local filepath="$path/$filename"
+
+        # Check readable
+        if [ ! -f "$filepath" ] || [ ! -r "$filepath" ]; then
+            return
+        fi
+
+        file_viewer.open "$filepath"
     fi
-    
-    local filepath="$path/$filename"
-    
-    # Check readable
-    if [ ! -f "$filepath" ] || [ ! -r "$filepath" ]; then
-        return
-    fi
-    
-    # Use viewer class
-    file_viewer.open "$filepath"
-    
+
     # Return to file manager
     draw_screen
 }
