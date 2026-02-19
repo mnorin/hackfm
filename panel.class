@@ -1036,24 +1036,41 @@ __PANEL__.enter(){
         __PANEL__.render
         __PANEL__.enter_result = "ok"
     elif [ "$filetype" = "f" ] && [ "$list_type" = "filesystem" ]; then
-        # Regular file on filesystem - check if it's an archive by trying to detect its type
-        local probe_type
-        archivelist __PANEL__.archive_list
-        __PANEL__.archive_list.archive_path = "$path/$filename"
-        probe_type=$(__PANEL__.archive_list.archive_type)
+        local filepath="$path/$filename"
+        local ext="${filename##*.}"
+        ext="${ext,,}"
 
-        if [ -n "$probe_type" ]; then
-            # archive_path setter recognised the extension - enter archive mode
-            __PANEL__._enter_archive "$filename"
-            __PANEL__.render
-            __PANEL__.enter_result = "ok"
+        # Check ext.conf first - takes precedence over archive browsing and executable bit
+        local handler=""
+        local ext_conf="$HACKFM_DIR/conf/ext.conf"
+        if [ -f "$ext_conf" ]; then
+            while IFS=' ' read -r conf_ext conf_cmd || [ -n "$conf_ext" ]; do
+                [ -z "$conf_ext" ] || [[ "$conf_ext" == \#* ]] && continue
+                if [ "${conf_ext,,}" = "$ext" ]; then
+                    handler="$conf_cmd"
+                    break
+                fi
+            done < "$ext_conf"
+        fi
+
+        if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
+            # ext.conf handler found - open with it, skip archive probe and executable check
+            __PANEL__.enter_result = "open:$filepath"
         else
-            # Plain file - open or execute
-            local filepath="$path/$filename"
-            if [ -x "$filepath" ]; then
-                __PANEL__.enter_result = "execute:$filepath"
+            # No ext.conf handler - check if it's an archive
+            local probe_type
+            archivelist __PANEL__.archive_list
+            __PANEL__.archive_list.archive_path = "$path/$filename"
+            probe_type=$(__PANEL__.archive_list.archive_type)
+
+            if [ -n "$probe_type" ]; then
+                # archive_path setter recognised the extension - enter archive mode
+                __PANEL__._enter_archive "$filename"
+                __PANEL__.render
+                __PANEL__.enter_result = "ok"
             else
-                __PANEL__.enter_result = "open:$filepath"
+                # Plain file - no handler, not an archive, ignore executable bit
+                __PANEL__.enter_result = ""
             fi
         fi
     else
