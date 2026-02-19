@@ -524,15 +524,15 @@ open_item() {
     $panel.enter
     local action=$($panel.enter_result)
 
-    # Panel handles directory navigation and renders itself
-    # We only handle file actions
+    # Panel handles directory navigation, archive browsing, and ext.conf lookup
+    # We only handle file open actions here
 
-    if [[ "$action" == execute:* ]] || [[ "$action" == open:* ]]; then
+    if [[ "$action" == open:* ]]; then
         local filepath="${action#*:}"
         local ext="${filepath##*.}"
-        ext="${ext,,}"  # lowercase
+        ext="${ext,,}"
 
-        # Check ext.conf for a handler (read fresh each time)
+        # Read ext.conf handler (panel already checked it exists, but we need the command)
         local handler=""
         local ext_conf="$HACKFM_DIR/conf/ext.conf"
         if [ -f "$ext_conf" ]; then
@@ -546,31 +546,28 @@ open_item() {
         fi
 
         if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
-            # Use configured handler
             $handler "$filepath" &>/dev/null &
-        elif [[ "$action" == execute:* ]] && [ -z "$handler" ] && [ -x "$filepath" ]; then
-            # Truly executable script/binary with no ext.conf override - run it
-            tui.screen.main
-            stty sane
-
-            trap - ERR
-            set +e
-            "$filepath"
-            set -e
-            trap '__ba_err_report $? $LINENO' ERR
-
-            tui.screen.alt
-            main_frame.setup
-            reload_both_panels
-            draw_screen
-        elif command -v xdg-open &>/dev/null; then
-            xdg-open "$filepath" &>/dev/null &
-        elif command -v open &>/dev/null; then
-            open "$filepath" &>/dev/null &
         fi
+        # No handler or program not found - do nothing
+
+    elif [[ "$action" == execute:* ]]; then
+        # Truly executable script/binary (no ext.conf entry) - run it
+        local filepath="${action#*:}"
+        tui.screen.main
+        stty sane
+
+        trap - ERR
+        set +e
+        "$filepath"
+        set -e
+        trap '__ba_err_report $? $LINENO' ERR
+
+        tui.screen.alt
+        main_frame.setup
+        reload_both_panels
+        draw_screen
     fi
-    # If action is "ok", panel navigated and already rendered itself
-    # If action is "", nothing happened (special item)
+    # action="" or "ok" - nothing to do
 }
 
 # ============================================================================
