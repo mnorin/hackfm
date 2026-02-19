@@ -378,9 +378,13 @@ __DIALOG__.show_confirm(){
                 __DIALOG__.result = 0
                 return 0
                 ;;
-            n|N|ESC)
+            n|N)
                 __DIALOG__.result = 1
                 return 1
+                ;;
+            ESC)
+                __DIALOG__.result = 2
+                return 2
                 ;;
         esac
     done

@@ -354,7 +354,7 @@ init() {
     editor file_editor
     
     # Create dialog
-    dialog file_dialog
+    tui_dialog file_dialog
     
     # Create command line instance
     if [ $CMDLINE_CREATED -eq 0 ]; then
