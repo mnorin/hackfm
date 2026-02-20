@@ -16,6 +16,7 @@ archivelist(){
     temp="${temp//${1}_sizes/${sanitized}_sizes}"
     temp="${temp//${1}_times/${sanitized}_times}"
     temp="${temp//${1}_full_paths/${sanitized}_full_paths}"
+    temp="${temp//${1}_marked/${sanitized}_marked}"
     
     . <(printf '%s' "${temp}")
 }
