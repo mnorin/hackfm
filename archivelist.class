@@ -96,6 +96,7 @@ declare -ag __ARCHIVELIST___types=()
 declare -ag __ARCHIVELIST___sizes=()
 declare -ag __ARCHIVELIST___times=()
 declare -ag __ARCHIVELIST___full_paths=()
+declare -ag __ARCHIVELIST___marked=()   # 1 = marked for operation, 0 = not marked
 
 # Format a byte count the same way filelist does
 __ARCHIVELIST__._format_size(){
@@ -321,6 +322,7 @@ __ARCHIVELIST__._filter_by_path(){
         __ARCHIVELIST___sizes+=("SUB-DIR")
         __ARCHIVELIST___times+=("")
         __ARCHIVELIST___full_paths+=("${current_prefix}${dir}")
+        __ARCHIVELIST___marked+=("0")
     done
     
     # Add files
@@ -331,6 +333,7 @@ __ARCHIVELIST__._filter_by_path(){
         __ARCHIVELIST___sizes+=("$filesize")
         __ARCHIVELIST___times+=("")
         __ARCHIVELIST___full_paths+=("$fullpath")
+        __ARCHIVELIST___marked+=("0")
     done
 }
 
@@ -343,6 +346,7 @@ __ARCHIVELIST__.load(){
     __ARCHIVELIST___sizes=()
     __ARCHIVELIST___times=()
     __ARCHIVELIST___full_paths=()
+    __ARCHIVELIST___marked=()
     __ARCHIVELIST__.selected = 0
     __ARCHIVELIST__.scroll = 0
     
@@ -357,6 +361,7 @@ __ARCHIVELIST__.load(){
     __ARCHIVELIST___sizes+=("UP--DIR")
     __ARCHIVELIST___times+=("")
     __ARCHIVELIST___full_paths+=("")
+    __ARCHIVELIST___marked+=("0")
     
     # Filter for current path
     __ARCHIVELIST__._filter_by_path
@@ -365,7 +370,7 @@ __ARCHIVELIST__.load(){
 # Get entry at index (same format as filelist)
 __ARCHIVELIST__.get(){
     local index="$1"
-    echo "${__ARCHIVELIST___files[$index]}|${__ARCHIVELIST___types[$index]}|${__ARCHIVELIST___sizes[$index]}|${__ARCHIVELIST___times[$index]}|0|0|"
+    echo "${__ARCHIVELIST___files[$index]}|${__ARCHIVELIST___types[$index]}|${__ARCHIVELIST___sizes[$index]}|${__ARCHIVELIST___times[$index]}|0|${__ARCHIVELIST___marked[$index]:-0}|"
 }
 
 # Get count
@@ -616,8 +621,55 @@ __ARCHIVELIST__.get_selected_item(){
 }
 
 # Stub methods for filelist API compatibility
-__ARCHIVELIST__.count_selected(){ echo 0; }
-__ARCHIVELIST__.toggle_selection(){ :; }
+__ARCHIVELIST__.toggle_selection(){
+    local selected=$(__ARCHIVELIST__.selected)
+    local filename="${__ARCHIVELIST___files[$selected]}"
+    # Don't allow selecting .. 
+    [[ "$filename" == ".." ]] && return
+    if [ "${__ARCHIVELIST___marked[$selected]:-0}" = "1" ]; then
+        __ARCHIVELIST___marked[$selected]="0"
+    else
+        __ARCHIVELIST___marked[$selected]="1"
+    fi
+}
+
+__ARCHIVELIST__.count_selected(){
+    local count=0
+    for mark in "${__ARCHIVELIST___marked[@]}"; do
+        [ "$mark" = "1" ] && count=$((count + 1))
+    done
+    echo $count
+}
+
+__ARCHIVELIST__.marked_count(){ __ARCHIVELIST__.count_selected; }
+
+__ARCHIVELIST__.marked_size(){
+    local total=0
+    local n=${#__ARCHIVELIST___marked[@]}
+    for ((i=0; i<n; i++)); do
+        if [ "${__ARCHIVELIST___marked[$i]}" = "1" ] && [ "${__ARCHIVELIST___types[$i]}" = "f" ]; then
+            local s="${__ARCHIVELIST___sizes[$i]}"
+            if [[ "$s" =~ ^[0-9]+$ ]]; then
+                total=$((total + s))
+            elif [[ "$s" =~ ^([0-9]+)K$ ]]; then
+                total=$((total + ${BASH_REMATCH[1]} * 1024))
+            elif [[ "$s" =~ ^([0-9]+)M$ ]]; then
+                total=$((total + ${BASH_REMATCH[1]} * 1048576))
+            fi
+        fi
+    done
+    echo $total
+}
+
+# Returns newline-separated internal paths of all marked entries
+__ARCHIVELIST__.get_marked_paths(){
+    local n=${#__ARCHIVELIST___marked[@]}
+    for ((i=0; i<n; i++)); do
+        if [ "${__ARCHIVELIST___marked[$i]}" = "1" ]; then
+            echo "${__ARCHIVELIST___full_paths[$i]}"
+        fi
+    done
+}
 __ARCHIVELIST__.selection_info(){ echo "0|0"; }
 __ARCHIVELIST__.find_and_select(){
     local target_name="$1"
@@ -657,8 +709,7 @@ __ARCHIVELIST__.find_and_select(){
     return 1
 }
 __ARCHIVELIST__.sort_order(){ echo "name_asc"; }
-__ARCHIVELIST__.marked_size(){ echo 0; }
-__ARCHIVELIST__.marked_count(){ echo 0; }
+
 __ARCHIVELIST__.type(){ echo "archive"; }
 __ARCHIVELIST__.get_selected(){ __ARCHIVELIST__.get_selected_item; }
 

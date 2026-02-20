@@ -902,12 +902,15 @@ make_directory() {
         if mkdir "$fullpath" 2>/dev/null; then
             # Success - reload directory and select newly created
             reload_active_panel
-            
+
             # Find and select the new directory
             local panel=$(get_active_panel)
             local panel_height=$($panel.height)
             $list.find_and_select "$dirname" $((panel_height - 3))
-            
+
+            # Re-render row cache so highlight matches new cursor position
+            $panel.prerender_all_rows
+
             draw_screen
         else
             # Error
@@ -1083,10 +1086,19 @@ extract_item() {
         return
     fi
 
-    # Build list of files to extract - for now archivelist has no multi-select,
-    # so we extract the file/dir under cursor
-    local files_to_extract=("$fpath")
-    local extract_label="\"$filename\""
+    # Use marked files if any, otherwise cursor item
+    local files_to_extract=()
+    local extract_label=""
+    local marked_count=$($active_list.count_selected)
+    if [ "$marked_count" -gt 0 ]; then
+        while IFS= read -r p; do
+            files_to_extract+=("$p")
+        done < <($active_list.get_marked_paths)
+        extract_label="$marked_count file(s)"
+    else
+        files_to_extract=("$fpath")
+        extract_label="\"$filename\""
+    fi
 
     # Calculate dialog dimensions
     local size=$(tui.screen.size)
