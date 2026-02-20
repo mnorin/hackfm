@@ -74,6 +74,7 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/viewer.h"
 . "$HACKFM_DIR/editor.h"
 . "$HACKFM_DIR/commandline.h"
+. "$HACKFM_DIR/msgbroker.h"
 . "$HACKFM_DIR/menu.h"
 . "$HACKFM_DIR/fkeybar.h"
 
@@ -92,6 +93,9 @@ APP_FRAME_CREATED=0
 # Command line state
 CMDLINE_CREATED=0
 TEXTVIEW_CREATED=0
+
+# Message broker
+BROKER_CREATED=0
 
 # Menu state
 MENU_CREATED=0
@@ -380,7 +384,7 @@ init() {
         commandline cmd
         CMDLINE_CREATED=1
     fi
-    
+
     # Configure command line
     local cmdline_row=$((rows - 1))  # One row above F-key bar
     cmd.row = $cmdline_row
@@ -389,6 +393,15 @@ init() {
     cmd.prompt = "$USER@$(hostname):$PWD\$ "
     cmd.text = ""
     cmd.cursor_pos = 0
+
+    # Create message broker and wire up pub/sub
+    if [ $BROKER_CREATED -eq 0 ]; then
+        msgbroker broker
+        BROKER_CREATED=1
+    fi
+    left_panel.message_broker = broker
+    right_panel.message_broker = broker
+    cmd.message_broker = broker
 }
 
 # ============================================================================
@@ -434,10 +447,6 @@ draw_screen() {
 
 # Draw command line (just above F-key bar)
 draw_command_line() {
-    # Update command line prompt with current directory
-    cmd.prompt = "$USER@$(hostname):$PWD\$ "
-    
-    # Render command line
     cmd.render
 }
 

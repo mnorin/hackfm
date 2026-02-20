@@ -13,6 +13,7 @@ __COMMANDLINE__.property(){
     local text=4
     local cursor_pos=5
     local history_pos=6
+    local message_broker=7
     
     if [ "$2" = "=" ]; then
         __COMMANDLINE___properties[$1]="$3"
@@ -86,6 +87,31 @@ __COMMANDLINE__.history_pos(){
 
 # Command history array
 declare -ag __COMMANDLINE___history=()
+
+__COMMANDLINE__.message_broker(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property message_broker = "$2"
+        # Auto-subscribe when broker is set
+        local broker="$2"
+        if [ -n "$broker" ] && declare -F "$broker.subscribe" &>/dev/null; then
+            "$broker.subscribe" "panel.active.dir_changed" "__COMMANDLINE__.process_message"
+        fi
+    else
+        __COMMANDLINE__.property message_broker
+    fi
+}
+
+# Handle incoming broker messages
+__COMMANDLINE__.process_message(){
+    local topic="$1"
+    local data="$2"
+    case "$topic" in
+        panel.active.dir_changed)
+            __COMMANDLINE__.prompt = "$USER@$(hostname):$data\$ "
+            __COMMANDLINE__.render
+            ;;
+    esac
+}
 
 # Render the command line
 __COMMANDLINE__.render(){

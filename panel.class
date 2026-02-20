@@ -31,6 +31,7 @@ __PANEL__.property(){
     local list_source=8  # Name of list object (filelist or archivelist instance)
     local in_archive=9  # 1 if viewing archive, 0 if normal filesystem
     local archive_path=10  # Path to archive file being viewed
+    local message_broker=11  # Name of msgbroker instance, empty = no broker
     
     if [ "$2" = "=" ]; then
         __PANEL___properties[$1]="$3"
@@ -268,6 +269,7 @@ __PANEL__.active(){
                 local list=$(__PANEL__.list_source)
                 local path=$($list.path)
                 cd "$path" 2>/dev/null || true
+                __PANEL__._publish_dir
             fi
         fi
     else
@@ -327,7 +329,35 @@ __PANEL__.archive_path(){
     fi
 }
 
-# Render method
+__PANEL__.message_broker(){
+    if [ "$1" = "=" ]; then
+        __PANEL__.property message_broker = "$2"
+    else
+        __PANEL__.property message_broker
+    fi
+}
+
+# Publish current directory to broker (only when active and broker is set)
+__PANEL__._publish_dir(){
+    local active=$(__PANEL__.active)
+    [ "$active" != "1" ] && return
+    local broker=$(__PANEL__.message_broker)
+    [ -z "$broker" ] && return
+    declare -F "$broker.publish" &>/dev/null || return
+    # In archive mode, publish path to archive file itself
+    local in_archive=$(__PANEL__.in_archive)
+    local path
+    if [ "$in_archive" = "1" ]; then
+        path=$(__PANEL__.archive_path)
+        path="${path%/*}"  # directory containing archive
+    else
+        local list=$(__PANEL__.list_source)
+        path=$($list.path)
+    fi
+    "$broker.publish" "panel.active.dir_changed" "$path"
+}
+
+
 
 # Draw info bar (filename or search field)
 __PANEL__.draw_info_bar(){
@@ -911,9 +941,10 @@ __PANEL__._enter_archive(){
     __PANEL__.in_archive = 1
     __PANEL__.archive_path = "$archive_fullpath"
     __PANEL__.list_source = "__PANEL__.archive_list"
-    
+
     # Pre-render
     __PANEL__.prerender_all_rows || return 1
+    __PANEL__._publish_dir
 }
 
 # Exit archive view mode
@@ -948,9 +979,10 @@ __PANEL__._exit_archive(){
     # Clear archive mode flags
     __PANEL__.in_archive = 0
     __PANEL__.archive_path = ""
-    
+
     # Pre-render
     __PANEL__.prerender_all_rows
+    __PANEL__._publish_dir
 }
 
 # Handle ENTER key - navigate into directory or set result for file opening
@@ -1021,6 +1053,7 @@ __PANEL__.enter(){
             local visible_rows=$((height - 3))
             $list.find_and_select "$current_dir" $visible_rows
             __PANEL__.prerender_all_rows
+            __PANEL__._publish_dir
         else
             local new_path
             if [ "$path" = "/" ]; then
@@ -1031,6 +1064,7 @@ __PANEL__.enter(){
             $list.path = "$new_path"
             cd "$new_path" 2>/dev/null || true
             __PANEL__.prerender_all_rows
+            __PANEL__._publish_dir
         fi
 
         __PANEL__.render
