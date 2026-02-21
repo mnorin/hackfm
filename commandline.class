@@ -95,6 +95,7 @@ __COMMANDLINE__.message_broker(){
         local broker="$2"
         if [ -n "$broker" ] && declare -F "$broker.subscribe" &>/dev/null; then
             "$broker.subscribe" "panel.active.dir_changed" "__COMMANDLINE__.process_message"
+            "$broker.subscribe" "panel.cursor_moved" "__COMMANDLINE__.process_message"
         fi
     else
         __COMMANDLINE__.property message_broker
@@ -109,6 +110,24 @@ __COMMANDLINE__.process_message(){
         panel.active.dir_changed)
             __COMMANDLINE__.prompt = "$USER@$(hostname):$data\$ "
             __COMMANDLINE__.render
+            ;;
+        panel.cursor_moved)
+            # Just reposition the cursor - no full redraw needed
+            local row=$(__COMMANDLINE__.row)
+            local col=$(__COMMANDLINE__.col)
+            local prompt=$(__COMMANDLINE__.prompt)
+            local text=$(__COMMANDLINE__.text)
+            local cursor_pos=$(__COMMANDLINE__.cursor_pos)
+            local width=$(__COMMANDLINE__.width)
+            local prompt_len=${#prompt}
+            local text_width=$((width - prompt_len))
+            local display_cursor=$cursor_pos
+            if [ ${#text} -gt $text_width ] && [ $cursor_pos -ge $text_width ]; then
+                display_cursor=$((text_width - 1))
+            fi
+            tui.cursor.move $row $((col + prompt_len + display_cursor))
+            tui.cursor.style.blinking_underline
+            tui.cursor.show
             ;;
     esac
 }
@@ -153,10 +172,11 @@ __COMMANDLINE__.render(){
     # Print text and fill remaining space
     printf "%-${text_width}s" "$visible_text"
     
-    # Position cursor at the right place
+    # Position cursor and show as blinking underline
     tui.cursor.move $row $((col + prompt_len + display_cursor))
+    tui.cursor.style.blinking_underline
     tui.cursor.show
-    
+
     tui.color.reset
 }
 

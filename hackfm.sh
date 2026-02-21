@@ -12,8 +12,9 @@ set -E  # Inherit error traps
 # Error handler
 error_handler() {
     local line=$1
-    tui.screen.clear
+    tui.cursor.style.default
     tui.cursor.show
+    tui.screen.clear
     tui.screen.main
     echo "ERROR at line $line"
     echo "Check $LOG_FILE for details"
@@ -1876,7 +1877,6 @@ main_loop() {
             HOME)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     if [ $has_cmdline_text -eq 1 ]; then
-                        # Move cursor to start of command line
                         cmd.move_cursor HOME
                         draw_command_line
                     else
@@ -1892,7 +1892,6 @@ main_loop() {
             END)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     if [ $has_cmdline_text -eq 1 ]; then
-                        # Move cursor to end of command line
                         cmd.move_cursor END
                         draw_command_line
                     else
@@ -1965,7 +1964,7 @@ main_loop() {
                 
             # Tab - switch panels (only in panel mode with empty cmdline)
             TAB)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
+                if [ $PANELS_VISIBLE -eq 1 ]; then
                     switch_panel
                     draw_command_line  # Update prompt with new active path
                 fi
@@ -2122,5 +2121,7 @@ main_loop
 
 # Cleanup
 trap - ERR WINCH
+tui.cursor.style.default
+tui.cursor.show
 tui.screen.main
 main_frame.cleanup

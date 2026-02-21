@@ -357,6 +357,16 @@ __PANEL__._publish_dir(){
     "$broker.publish" "panel.active.dir_changed" "$path"
 }
 
+# Publish cursor moved (only when active and broker is set)
+__PANEL__._publish_cursor_moved(){
+    local active=$(__PANEL__.active)
+    [ "$active" != "1" ] && return
+    local broker=$(__PANEL__.message_broker)
+    [ -z "$broker" ] && return
+    declare -F "$broker.publish" &>/dev/null || return
+    "$broker.publish" "panel.cursor_moved" ""
+}
+
 
 
 # Draw info bar (filename or search field)
@@ -874,6 +884,7 @@ __PANEL__.navigate(){
     fi
 
     stty echo 2>/dev/null
+    __PANEL__._publish_cursor_moved
 }
 
 # Get selected item info
