@@ -59,11 +59,13 @@ __DIALOG__.show_input(){
     local title="$1"
     local message="$2"
     local default="${3:-}"
-    
+
     __DIALOG__.title = "$title"
     __DIALOG__.message = "$message"
     __DIALOG__.input_value = "$default"
-    
+
+    tui.cursor.hide
+
     # Get terminal size
     local size=$(tui.screen.size)
     local rows=${size% *}
@@ -274,10 +276,12 @@ __DIALOG__.show_input(){
 __DIALOG__.show_confirm(){
     local title="$1"
     local message="$2"
-    
+
     __DIALOG__.title = "$title"
     __DIALOG__.message = "$message"
-    
+
+    tui.cursor.hide
+
     # Get terminal size
     local size=$(tui.screen.size)
     local rows=${size% *}
@@ -396,17 +400,35 @@ __DIALOG__.show_confirm(){
 __DIALOG__.show_status(){
     local title="$1"
     local message="$2"
+    # Optional panel bounds: panel_x panel_y panel_width panel_height
+    # If provided, dialog is centered within panel instead of whole screen
+    local panel_x="${3:-}"
+    local panel_y="${4:-}"
+    local panel_w="${5:-}"
+    local panel_h="${6:-}"
 
-    local size=$(tui.screen.size)
-    local rows=${size% *}
-    local cols=${size#* }
+    tui.cursor.hide
+
+    local area_cols area_rows area_x area_y
+    if [ -n "$panel_x" ]; then
+        area_x=$panel_x
+        area_y=$panel_y
+        area_cols=$panel_w
+        area_rows=$panel_h
+    else
+        local size=$(tui.screen.size)
+        area_rows=${size% *}
+        area_cols=${size#* }
+        area_x=1
+        area_y=1
+    fi
 
     local dialog_width=50
     [ ${#message} -gt 44 ] && dialog_width=$(( ${#message} + 6 ))
-    [ $dialog_width -gt $((cols - 4)) ] && dialog_width=$((cols - 4))
+    [ $dialog_width -gt $((area_cols - 4)) ] && dialog_width=$((area_cols - 4))
     local dialog_height=5
-    local dialog_row=$(( (rows - dialog_height) / 2 ))
-    local dialog_col=$(( (cols - dialog_width) / 2 ))
+    local dialog_row=$(( area_y + (area_rows - dialog_height) / 2 ))
+    local dialog_col=$(( area_x + (area_cols - dialog_width) / 2 ))
 
     # Shadow
     tui.color.bg_black
@@ -450,10 +472,12 @@ __DIALOG__.show_status(){
 __DIALOG__.show_message(){
     local title="$1"
     local message="$2"
-    
+
     __DIALOG__.title = "$title"
     __DIALOG__.message = "$message"
-    
+
+    tui.cursor.hide
+
     # Get terminal size
     local size=$(tui.screen.size)
     local rows=${size% *}
@@ -509,10 +533,10 @@ __DIALOG__.show_message(){
     tui.color.bold
     printf "[ OK ]"
     tui.color.reset
-    
+
     # Wait for key
     tui.input.key >/dev/null
-    
+
     __DIALOG__.result = 0
     return 0
 }

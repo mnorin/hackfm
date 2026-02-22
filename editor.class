@@ -288,10 +288,12 @@ __EDITOR__.draw_line(){
 
     tui.cursor.move $screen_row 1
     tui.color.bg_blue
-    tui.color.bright_white
+    tui.color.white
 
     if [ $file_row -lt ${#__EDITOR___lines[@]} ]; then
         local line="${__EDITOR___lines[$file_row]}"
+        # Expand tabs to spaces for display
+        line="${line//$'\t'/        }"
 
         # Check if this line has selection
         local has_selection=0
@@ -328,7 +330,7 @@ __EDITOR__.draw_line(){
                     printf '%s' "$char"
                     tui.style.reset
                     tui.color.bg_blue
-                    tui.color.bright_white
+                    tui.color.white
                 else
                     printf '%s' "$char"
                 fi
@@ -807,7 +809,7 @@ __EDITOR__.show(){
     # Editor loop
     while true; do
         local key=$(tui.input.key)
-        
+
         case "$key" in
             # Navigation
             UP|DOWN|LEFT|RIGHT|HOME|END)
@@ -1110,11 +1112,14 @@ __EDITOR__.show(){
                 __EDITOR__.update_cursor
                 ;;
             
-            # Clear selection (ESC)
+            # ESC: clear selection
             ESC)
-                __EDITOR__.clear_selection
-                __EDITOR__.draw_content
-                __EDITOR__.update_cursor
+                local sel_active=$(__EDITOR__.selection_active)
+                if [ "$sel_active" = "1" ]; then
+                    __EDITOR__.clear_selection
+                    __EDITOR__.draw_content
+                    __EDITOR__.update_cursor
+                fi
                 ;;
             
             # Exit (F10)

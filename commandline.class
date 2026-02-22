@@ -96,6 +96,7 @@ __COMMANDLINE__.message_broker(){
         if [ -n "$broker" ] && declare -F "$broker.subscribe" &>/dev/null; then
             "$broker.subscribe" "panel.active.dir_changed" "__COMMANDLINE__.process_message"
             "$broker.subscribe" "panel.cursor_moved" "__COMMANDLINE__.process_message"
+            "$broker.subscribe" "ui.menu_closed" "__COMMANDLINE__.process_message"
         fi
     else
         __COMMANDLINE__.property message_broker
@@ -128,6 +129,9 @@ __COMMANDLINE__.process_message(){
             tui.cursor.move $row $((col + prompt_len + display_cursor))
             tui.cursor.style.blinking_underline
             tui.cursor.show
+            ;;
+        ui.menu_closed)
+            __COMMANDLINE__.render
             ;;
     esac
 }

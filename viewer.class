@@ -92,7 +92,8 @@ __VIEWER__.load(){
             line="${line%$'\r'}"
             # Replace form feed (page break) with empty line
             line="${line//$'\f'/}"
-            # Strip other control chars (keep tab)
+            # Expand tabs to spaces, strip other control chars
+            line="${line//$'\t'/        }"
             line=$(printf '%s' "$line" | tr '\000-\010\013-\037\177' '.')
             __VIEWER___lines+=("$line")
         done < <(eval "$cmd" 2>/dev/null)
@@ -117,6 +118,7 @@ __VIEWER__.load(){
         else
             while IFS= read -r line; do
                 line="${line%$'\r'}"
+                line="${line//$'\t'/        }"
                 line=$(printf '%s' "$line" | tr '\000-\010\013-\037\177' '.')
                 __VIEWER___lines+=("$line")
             done < "$filepath"
@@ -130,7 +132,7 @@ __VIEWER__.display_content(){
         for ((i=scroll; i<scroll+max_rows && i<total_lines; i++)); do
             tui.cursor.move $row 1
             tui.color.bg_blue
-            tui.color.bright_white
+            tui.color.white
 
             # Truncate long lines - use cut for byte-safe truncation
             local display_line="${__VIEWER___lines[$i]}"
@@ -213,8 +215,11 @@ __VIEWER__.show(){
         # Input
         local key=$(tui.input.key)
         local old_scroll=$scroll
-        
+
         case "$key" in
+            ESC|F3|F10)
+                break
+                ;;
             UP)
                 [ $scroll -gt 0 ] && ((scroll--))
                 ;;
@@ -238,9 +243,7 @@ __VIEWER__.show(){
                 scroll=$((total_lines - max_rows))
                 [ $scroll -lt 0 ] && scroll=0
                 ;;
-            q|Q|F3|F10)
-                break
-                ;;
+
         esac
         
         # Optimize redraw for single-line scroll
@@ -263,7 +266,7 @@ __VIEWER__.show(){
             if [ $new_line_idx -lt $total_lines ]; then
                 tui.cursor.move $region_bottom 1
                 tui.color.bg_blue
-                tui.color.bright_white
+                tui.color.white
                 local display_line="${__VIEWER___lines[$new_line_idx]}"
                 local display_len=$(printf '%s' "$display_line" | wc -m)
                 if [ "$display_len" -gt "$cols" ]; then
@@ -293,7 +296,7 @@ __VIEWER__.show(){
             # Draw new top line
             tui.cursor.move 2 1
             tui.color.bg_blue
-            tui.color.bright_white
+            tui.color.white
             local display_line="${__VIEWER___lines[$scroll]}"
             local display_len=$(printf '%s' "$display_line" | wc -m)
             if [ "$display_len" -gt "$cols" ]; then
