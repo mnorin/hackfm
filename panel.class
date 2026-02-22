@@ -31,6 +31,8 @@ __PANEL__.property(){
     local list_source=8  # Name of list object (filelist or archivelist instance)
     local in_archive=9  # 1 if viewing archive, 0 if normal filesystem
     local archive_path=10  # Path to archive file being viewed
+    local message_broker=11  # Name of msgbroker instance, empty = no broker
+    local dialog=12  # Name of dialog instance for status messages
     
     if [ "$2" = "=" ]; then
         __PANEL___properties[$1]="$3"
@@ -268,6 +270,7 @@ __PANEL__.active(){
                 local list=$(__PANEL__.list_source)
                 local path=$($list.path)
                 cd "$path" 2>/dev/null || true
+                __PANEL__._publish_dir
             fi
         fi
     else
@@ -327,7 +330,53 @@ __PANEL__.archive_path(){
     fi
 }
 
-# Render method
+__PANEL__.message_broker(){
+    if [ "$1" = "=" ]; then
+        __PANEL__.property message_broker = "$2"
+    else
+        __PANEL__.property message_broker
+    fi
+}
+
+__PANEL__.dialog(){
+    if [ "$1" = "=" ]; then
+        __PANEL__.property dialog = "$2"
+    else
+        __PANEL__.property dialog
+    fi
+}
+
+# Publish current directory to broker (only when active and broker is set)
+__PANEL__._publish_dir(){
+    local active=$(__PANEL__.active)
+    [ "$active" != "1" ] && return
+    local broker=$(__PANEL__.message_broker)
+    [ -z "$broker" ] && return
+    declare -F "$broker.publish" &>/dev/null || return
+    # In archive mode, publish path to archive file itself
+    local in_archive=$(__PANEL__.in_archive)
+    local path
+    if [ "$in_archive" = "1" ]; then
+        path=$(__PANEL__.archive_path)
+        path="${path%/*}"  # directory containing archive
+    else
+        local list=$(__PANEL__.list_source)
+        path=$($list.path)
+    fi
+    "$broker.publish" "panel.active.dir_changed" "$path"
+}
+
+# Publish cursor moved (only when active and broker is set)
+__PANEL__._publish_cursor_moved(){
+    local active=$(__PANEL__.active)
+    [ "$active" != "1" ] && return
+    local broker=$(__PANEL__.message_broker)
+    [ -z "$broker" ] && return
+    declare -F "$broker.publish" &>/dev/null || return
+    "$broker.publish" "panel.cursor_moved" ""
+}
+
+
 
 # Draw info bar (filename or search field)
 __PANEL__.draw_info_bar(){
@@ -480,7 +529,6 @@ __PANEL__.draw_header(){
 
 # Render panel
 __PANEL__.render(){
-    stty -echo 2>/dev/null
     tui.cursor.hide
 
     local list=$(__PANEL__.list_source)
@@ -603,7 +651,6 @@ __PANEL__.render(){
     __PANEL__.draw_info_bar
 
     tui.cursor.hide
-    stty echo 2>/dev/null
 }
 
 # Quick search - interactive search mode with its own input loop
@@ -783,7 +830,6 @@ __PANEL__.navigate(){
         return
     fi
 
-    stty -echo 2>/dev/null
     tui.cursor.hide
 
     # Hoist panel geometry - used in all branches below
@@ -843,7 +889,7 @@ __PANEL__.navigate(){
         __PANEL__.draw_info_bar
     fi
 
-    stty echo 2>/dev/null
+    __PANEL__._publish_cursor_moved
 }
 
 # Get selected item info
@@ -898,22 +944,35 @@ __PANEL__._enter_archive(){
     local list=$(__PANEL__.list_source)
     local archive_file="$1"
     local archive_fullpath="$($list.path)/$archive_file"
-    
+
+    tui.cursor.hide
+
+    # Show status dialog if dialog instance is set
+    local dlg=$(__PANEL__.dialog)
+    if [ -n "$dlg" ] && declare -F "$dlg.show_status" &>/dev/null; then
+        local px=$(__PANEL__.x)
+        local py=$(__PANEL__.y)
+        local pw=$(__PANEL__.width)
+        local ph=$(__PANEL__.height)
+        "$dlg.show_status" "Opening Archive" "Opening archive $archive_file..." "$px" "$py" "$pw" "$ph"
+    fi
+
     # Create archivelist object as a separate object
     archivelist __PANEL__.archive_list || return 1
-    
+
     # Initialize archive (archive_path setter auto-detects archive_type)
     __PANEL__.archive_list.archive_path = "$archive_fullpath" || return 1
     __PANEL__.archive_list.internal_path = "" || return 1
     __PANEL__.archive_list.load || return 1
-    
+
     # Mark panel as in archive mode
     __PANEL__.in_archive = 1
     __PANEL__.archive_path = "$archive_fullpath"
     __PANEL__.list_source = "__PANEL__.archive_list"
-    
+
     # Pre-render
     __PANEL__.prerender_all_rows || return 1
+    __PANEL__._publish_dir
 }
 
 # Exit archive view mode
@@ -948,9 +1007,10 @@ __PANEL__._exit_archive(){
     # Clear archive mode flags
     __PANEL__.in_archive = 0
     __PANEL__.archive_path = ""
-    
+
     # Pre-render
     __PANEL__.prerender_all_rows
+    __PANEL__._publish_dir
 }
 
 # Handle ENTER key - navigate into directory or set result for file opening
@@ -1021,6 +1081,7 @@ __PANEL__.enter(){
             local visible_rows=$((height - 3))
             $list.find_and_select "$current_dir" $visible_rows
             __PANEL__.prerender_all_rows
+            __PANEL__._publish_dir
         else
             local new_path
             if [ "$path" = "/" ]; then
@@ -1031,6 +1092,7 @@ __PANEL__.enter(){
             $list.path = "$new_path"
             cd "$new_path" 2>/dev/null || true
             __PANEL__.prerender_all_rows
+            __PANEL__._publish_dir
         fi
 
         __PANEL__.render

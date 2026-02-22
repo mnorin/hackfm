@@ -13,6 +13,7 @@ __COMMANDLINE__.property(){
     local text=4
     local cursor_pos=5
     local history_pos=6
+    local message_broker=7
     
     if [ "$2" = "=" ]; then
         __COMMANDLINE___properties[$1]="$3"
@@ -87,6 +88,54 @@ __COMMANDLINE__.history_pos(){
 # Command history array
 declare -ag __COMMANDLINE___history=()
 
+__COMMANDLINE__.message_broker(){
+    if [ "$1" = "=" ]; then
+        __COMMANDLINE__.property message_broker = "$2"
+        # Auto-subscribe when broker is set
+        local broker="$2"
+        if [ -n "$broker" ] && declare -F "$broker.subscribe" &>/dev/null; then
+            "$broker.subscribe" "panel.active.dir_changed" "__COMMANDLINE__.process_message"
+            "$broker.subscribe" "panel.cursor_moved" "__COMMANDLINE__.process_message"
+            "$broker.subscribe" "ui.menu_closed" "__COMMANDLINE__.process_message"
+        fi
+    else
+        __COMMANDLINE__.property message_broker
+    fi
+}
+
+# Handle incoming broker messages
+__COMMANDLINE__.process_message(){
+    local topic="$1"
+    local data="$2"
+    case "$topic" in
+        panel.active.dir_changed)
+            __COMMANDLINE__.prompt = "$USER@$(hostname):$data\$ "
+            __COMMANDLINE__.render
+            ;;
+        panel.cursor_moved)
+            # Just reposition the cursor - no full redraw needed
+            local row=$(__COMMANDLINE__.row)
+            local col=$(__COMMANDLINE__.col)
+            local prompt=$(__COMMANDLINE__.prompt)
+            local text=$(__COMMANDLINE__.text)
+            local cursor_pos=$(__COMMANDLINE__.cursor_pos)
+            local width=$(__COMMANDLINE__.width)
+            local prompt_len=${#prompt}
+            local text_width=$((width - prompt_len))
+            local display_cursor=$cursor_pos
+            if [ ${#text} -gt $text_width ] && [ $cursor_pos -ge $text_width ]; then
+                display_cursor=$((text_width - 1))
+            fi
+            tui.cursor.move $row $((col + prompt_len + display_cursor))
+            tui.cursor.style.blinking_underline
+            tui.cursor.show
+            ;;
+        ui.menu_closed)
+            __COMMANDLINE__.render
+            ;;
+    esac
+}
+
 # Render the command line
 __COMMANDLINE__.render(){
     local row=$(__COMMANDLINE__.row)
@@ -127,10 +176,11 @@ __COMMANDLINE__.render(){
     # Print text and fill remaining space
     printf "%-${text_width}s" "$visible_text"
     
-    # Position cursor at the right place
+    # Position cursor and show as blinking underline
     tui.cursor.move $row $((col + prompt_len + display_cursor))
+    tui.cursor.style.blinking_underline
     tui.cursor.show
-    
+
     tui.color.reset
 }
 
@@ -157,19 +207,14 @@ __COMMANDLINE__.append(){
     local text=$(__COMMANDLINE__.text)
     local cursor_pos=$(__COMMANDLINE__.cursor_pos)
     
-    # Insert string at cursor position
+    # Insert string at cursor position, with space after
     local before="${text:0:$cursor_pos}"
     local after="${text:$cursor_pos}"
     
-    # Add space before if needed
-    if [ -n "$before" ] && [ "${before: -1}" != " " ]; then
-        before="$before "
-    fi
+    __COMMANDLINE__.text = "${before}${str} ${after}"
     
-    __COMMANDLINE__.text = "${before}${str}${after}"
-    
-    # Move cursor after inserted string
-    __COMMANDLINE__.cursor_pos = $((${#before} + ${#str}))
+    # Move cursor after inserted string and space
+    __COMMANDLINE__.cursor_pos = $((cursor_pos + ${#str} + 1))
     
     __COMMANDLINE__.render
 }

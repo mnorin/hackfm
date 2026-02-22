@@ -94,6 +94,16 @@ tui.cursor.style(){
     printf '\033[%d q' "$1"
 }
 
+# Convenience: blinking underline (classic terminal cursor)
+tui.cursor.style.blinking_underline(){
+    printf '\033[3 q'
+}
+
+# Convenience: reset to terminal default
+tui.cursor.style.default(){
+    printf '\033[0 q'
+}
+
 # Get cursor position (returns via callback or prints to stdout)
 # Note: This reads from terminal, may not work reliably in all contexts
 # Use with caution - can block if terminal doesn't respond

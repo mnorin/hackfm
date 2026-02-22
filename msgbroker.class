@@ -47,10 +47,10 @@ __MSGBROKER__.publish(){
         return 0  # No subscribers, that's okay
     fi
     
-    # Call each handler
+    # Call each handler with topic and data
     for handler in $handlers; do
         if declare -F "$handler" &>/dev/null; then
-            "$handler" "$data"
+            "$handler" "$topic" "$data"
         else
             echo "Warning: handler '$handler' for topic '$topic' not found" >&2
         fi

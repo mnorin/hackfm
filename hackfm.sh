@@ -12,9 +12,11 @@ set -E  # Inherit error traps
 # Error handler
 error_handler() {
     local line=$1
-    tui.screen.clear
+    tui.cursor.style.default
     tui.cursor.show
+    tui.screen.clear
     tui.screen.main
+    [ -n "$ORIGINAL_STTY" ] && stty "$ORIGINAL_STTY" 2>/dev/null
     echo "ERROR at line $line"
     echo "Check $LOG_FILE for details"
     tail -20 "$LOG_FILE"
@@ -74,6 +76,7 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/viewer.h"
 . "$HACKFM_DIR/editor.h"
 . "$HACKFM_DIR/commandline.h"
+. "$HACKFM_DIR/msgbroker.h"
 . "$HACKFM_DIR/menu.h"
 . "$HACKFM_DIR/fkeybar.h"
 
@@ -92,6 +95,9 @@ APP_FRAME_CREATED=0
 # Command line state
 CMDLINE_CREATED=0
 TEXTVIEW_CREATED=0
+
+# Message broker
+BROKER_CREATED=0
 
 # Menu state
 MENU_CREATED=0
@@ -312,7 +318,10 @@ show_error() {
 init() {
     # Save original terminal settings before TUI takes over
     ORIGINAL_STTY=$(stty -g 2>/dev/null)
-    
+
+    # Disable echo for entire app lifetime - prevents escape sequences bleeding into display
+    stty -echo 2>/dev/null
+
     # Switch to alternate screen for file manager
     tui.screen.alt
     
@@ -380,7 +389,7 @@ init() {
         commandline cmd
         CMDLINE_CREATED=1
     fi
-    
+
     # Configure command line
     local cmdline_row=$((rows - 1))  # One row above F-key bar
     cmd.row = $cmdline_row
@@ -389,6 +398,19 @@ init() {
     cmd.prompt = "$USER@$(hostname):$PWD\$ "
     cmd.text = ""
     cmd.cursor_pos = 0
+
+    # Create message broker and wire up pub/sub
+    if [ $BROKER_CREATED -eq 0 ]; then
+        msgbroker broker
+        BROKER_CREATED=1
+    fi
+    left_panel.message_broker = broker
+    right_panel.message_broker = broker
+    cmd.message_broker = broker
+
+    # Wire dialog to panels for status messages
+    left_panel.dialog = file_dialog
+    right_panel.dialog = file_dialog
 }
 
 # ============================================================================
@@ -399,6 +421,26 @@ init() {
 redraw_panels_only() {
     left_panel.render
     right_panel.render
+}
+
+# Redraw only panels that overlap the last dropdown area
+redraw_panels_for_dropdown() {
+    local drop_col=$(main_menu.last_dropdown_col)
+    local drop_right=$(main_menu.last_dropdown_right)
+    [ -z "$drop_col" ] && { redraw_panels_only; return; }
+
+    local lx=$(left_panel.x)
+    local lright=$((lx + $(left_panel.width) + 1))
+    local rx=$(right_panel.x)
+    local rright=$((rx + $(right_panel.width) + 1))
+
+    # Redraw panel if dropdown overlaps its column range
+    if [ "$drop_right" -ge "$lx" ] && [ "$drop_col" -le "$lright" ]; then
+        left_panel.render
+    fi
+    if [ "$drop_right" -ge "$rx" ] && [ "$drop_col" -le "$rright" ]; then
+        right_panel.render
+    fi
 }
 
 # Draw screen
@@ -434,10 +476,6 @@ draw_screen() {
 
 # Draw command line (just above F-key bar)
 draw_command_line() {
-    # Update command line prompt with current directory
-    cmd.prompt = "$USER@$(hostname):$PWD\$ "
-    
-    # Render command line
     cmd.render
 }
 
@@ -611,6 +649,7 @@ open_item() {
             tui.cursor.hide
 
             tui.screen.alt
+            stty -echo 2>/dev/null
             main_frame.setup
             reload_both_panels
             draw_screen
@@ -729,7 +768,7 @@ show_menu() {
         MENU_CREATED=1
         
         # Set background redraw callback
-        main_menu.background_redraw = "redraw_panels_only"
+        main_menu.background_redraw = "redraw_panels_for_dropdown"
         
         # Setup menu structure
         main_menu.clear
@@ -782,9 +821,10 @@ show_menu() {
         fi
     fi
     
-    # Redraw title bar to clear menu, then redraw panels
-    main_frame.draw_frame "Help" "" "View" "Edit" "Copy" "Move" "Mkdir" "Delete" "Menu" "Quit"
-    redraw_panels_only
+    # Restore title bar only - dropdown area was already cleaned up by background_redraw
+    # inside the menu loop before it returned
+    main_frame.draw_title
+    broker.publish "ui.menu_closed" ""
 }
 
 # ============================================================================
@@ -814,7 +854,8 @@ view_file() {
         local tmp_file="$tmp_dir/$arch_filename"
 
         # Show extracting status
-        file_dialog.show_status "Extracting" "Extracting $arch_filename..."
+        file_dialog.show_status "Extracting" "Extracting $arch_filename..." \
+            $($active_panel.x) $($active_panel.y) $($active_panel.width) $($active_panel.height)
 
         # Extract the single file
         $arch_list.extract_files "$tmp_dir" "$arch_path"
@@ -841,6 +882,7 @@ view_file() {
             return
         fi
 
+        file_dialog.show_status "Opening" "Opening $filename for viewing..."
         file_viewer.open "$filepath"
     fi
 
@@ -1867,7 +1909,6 @@ main_loop() {
             HOME)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     if [ $has_cmdline_text -eq 1 ]; then
-                        # Move cursor to start of command line
                         cmd.move_cursor HOME
                         draw_command_line
                     else
@@ -1883,7 +1924,6 @@ main_loop() {
             END)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     if [ $has_cmdline_text -eq 1 ]; then
-                        # Move cursor to end of command line
                         cmd.move_cursor END
                         draw_command_line
                     else
@@ -1956,7 +1996,7 @@ main_loop() {
                 
             # Tab - switch panels (only in panel mode with empty cmdline)
             TAB)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
+                if [ $PANELS_VISIBLE -eq 1 ]; then
                     switch_panel
                     draw_command_line  # Update prompt with new active path
                 fi
@@ -2064,6 +2104,18 @@ RCFILE
                     delete_item
                 fi
                 ;;
+            CTRL-SLASH)
+                # Insert filename under cursor into command line
+                local active=$(get_active_panel)
+                local selected_info=$($active.get_selected_item)
+                local fname="${selected_info%%|*}"
+                fname="${fname//$'\n'/}"
+                fname="${fname//$'\r'/}"
+                if [ -n "$fname" ]; then
+                    cmd.append "$fname"
+                    draw_command_line
+                fi
+                ;;
             F9)
                 # Open menu
                 show_menu
@@ -2113,5 +2165,8 @@ main_loop
 
 # Cleanup
 trap - ERR WINCH
+tui.cursor.style.default
+tui.cursor.show
 tui.screen.main
+[ -n "$ORIGINAL_STTY" ] && stty "$ORIGINAL_STTY" 2>/dev/null
 main_frame.cleanup

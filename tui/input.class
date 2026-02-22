@@ -49,11 +49,11 @@ tui.input.key(){
     # Check for escape sequence (special keys start with ESC)
     if [[ $key == $'\033' ]]; then
         # Read next char to determine sequence type
-        IFS= read -rsn1 -t 0.001 key
+        IFS= read -rsn1 -t 0.05 key
         
         if [[ $key == '[' ]]; then
             # CSI sequence (most special keys)
-            IFS= read -rsn1 -t 0.001 key
+            IFS= read -rsn1 -t 0.05 key
             
             case "$key" in
                 A) echo "UP" ;;
@@ -66,7 +66,7 @@ tui.input.key(){
                 # Multi-character sequences
                 [0-9])
                     local seq="$key"
-                    IFS= read -rsn1 -t 0.001 key
+                    IFS= read -rsn1 -t 0.05 key
                     
                     if [[ $key == '~' ]]; then
                         case "$seq" in
@@ -82,7 +82,7 @@ tui.input.key(){
                     elif [[ $key == [0-9] ]]; then
                         # Function keys F1-F12
                         seq="$seq$key"
-                        IFS= read -rsn1 -t 0.001 key
+                        IFS= read -rsn1 -t 0.05 key
                         
                         if [[ $key == '~' ]]; then
                             case "$seq" in
@@ -107,7 +107,7 @@ tui.input.key(){
             esac
         elif [[ $key == 'O' ]]; then
             # SS3 sequence (alternate function keys)
-            IFS= read -rsn1 -t 0.001 key
+            IFS= read -rsn1 -t 0.05 key
             case "$key" in
                 P) echo "F1" ;;
                 Q) echo "F2" ;;
@@ -117,6 +117,9 @@ tui.input.key(){
                 F) echo "END" ;;
                 *) echo "ESC" ;;
             esac
+        elif [[ $key == $'\033' ]]; then
+            # Second ESC = double-escape
+            echo "ESC-ESC"
         elif [[ -n $key ]]; then
             # ESC followed by another character = Alt key
             # Convert to uppercase for consistency
@@ -167,10 +170,10 @@ tui.input.key(){
             # Ctrl+number keys have inconsistent codes, but some terminals use these
             $'\x00') echo "CTRL-2" ;;  # Null
             $'\x1b') echo "CTRL-3" ;;  # ESC (conflict, handled above)
-            $'\x1c') echo "CTRL-4" ;;  # FS
+            $'\x1c') echo "CTRL-BACKSLASH" ;;  # Ctrl+\
             $'\x1d') echo "CTRL-5" ;;  # GS
             $'\x1e') echo "CTRL-6" ;;  # RS
-            $'\x1f') echo "CTRL-7" ;;  # US
+            $'\x1f') echo "CTRL-SLASH" ;;  # Ctrl+/
             # Note: Ctrl-1, Ctrl-8, Ctrl-9, Ctrl-0 often don't produce control codes
             *) echo "$key" ;;
         esac
@@ -210,7 +213,7 @@ tui.input.key_timeout(){
 # Check if key is available (non-blocking)
 # Returns 0 if key available, 1 if not
 tui.input.available(){
-    read -rsn1 -t 0.001
+    read -rsn1 -t 0.05
     return $?
 }
 
@@ -338,3 +341,4 @@ tui.input.validate_positive(){
     local positive_regex='^[0-9]+$'
     [[ $1 =~ $positive_regex ]] && [ "$1" -gt 0 ]
 }
+
