@@ -2104,11 +2104,13 @@ RCFILE
                     delete_item
                 fi
                 ;;
-            ALT-P)
+            CTRL-SLASH)
                 # Insert filename under cursor into command line
                 local active=$(get_active_panel)
                 local selected_info=$($active.get_selected_item)
                 local fname="${selected_info%%|*}"
+                fname="${fname//$'\n'/}"
+                fname="${fname//$'\r'/}"
                 if [ -n "$fname" ]; then
                     cmd.append "$fname"
                     draw_command_line

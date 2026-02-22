@@ -207,19 +207,14 @@ __COMMANDLINE__.append(){
     local text=$(__COMMANDLINE__.text)
     local cursor_pos=$(__COMMANDLINE__.cursor_pos)
     
-    # Insert string at cursor position
+    # Insert string at cursor position, with space after
     local before="${text:0:$cursor_pos}"
     local after="${text:$cursor_pos}"
     
-    # Add space before if needed
-    if [ -n "$before" ] && [ "${before: -1}" != " " ]; then
-        before="$before "
-    fi
+    __COMMANDLINE__.text = "${before}${str} ${after}"
     
-    __COMMANDLINE__.text = "${before}${str}${after}"
-    
-    # Move cursor after inserted string
-    __COMMANDLINE__.cursor_pos = $((${#before} + ${#str}))
+    # Move cursor after inserted string and space
+    __COMMANDLINE__.cursor_pos = $((cursor_pos + ${#str} + 1))
     
     __COMMANDLINE__.render
 }

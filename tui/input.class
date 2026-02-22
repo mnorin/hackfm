@@ -170,10 +170,10 @@ tui.input.key(){
             # Ctrl+number keys have inconsistent codes, but some terminals use these
             $'\x00') echo "CTRL-2" ;;  # Null
             $'\x1b') echo "CTRL-3" ;;  # ESC (conflict, handled above)
-            $'\x1c') echo "CTRL-4" ;;  # FS
+            $'\x1c') echo "CTRL-BACKSLASH" ;;  # Ctrl+\
             $'\x1d') echo "CTRL-5" ;;  # GS
             $'\x1e') echo "CTRL-6" ;;  # RS
-            $'\x1f') echo "CTRL-7" ;;  # US
+            $'\x1f') echo "CTRL-SLASH" ;;  # Ctrl+/
             # Note: Ctrl-1, Ctrl-8, Ctrl-9, Ctrl-0 often don't produce control codes
             *) echo "$key" ;;
         esac
