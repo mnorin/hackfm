@@ -4,13 +4,9 @@
 # Load fkeybar
 . fkeybar.h
 
-__STATUSBAR___properties=()
+declare -Ag __STATUSBAR___properties=()
 
 __STATUSBAR__.property(){
-    # Property indices
-    local row=0
-    local width=1
-    
     if [ "$2" = "=" ]; then
         __STATUSBAR___properties[$1]="$3"
     else
@@ -19,21 +15,8 @@ __STATUSBAR__.property(){
 }
 
 # Property accessors
-__STATUSBAR__.row(){
-    if [ "$1" = "=" ]; then
-        __STATUSBAR__.property row = "$2"
-    else
-        __STATUSBAR__.property row
-    fi
-}
-
-__STATUSBAR__.width(){
-    if [ "$1" = "=" ]; then
-        __STATUSBAR__.property width = "$2"
-    else
-        __STATUSBAR__.property width
-    fi
-}
+__STATUSBAR__.row(){   __STATUSBAR__.property row   "$@"; }
+__STATUSBAR__.width(){ __STATUSBAR__.property width "$@"; }
 
 # Internal fkeybar instance (created on first render)
 __STATUSBAR___fkeybar_created=0

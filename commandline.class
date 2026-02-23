@@ -2,19 +2,9 @@
 # commandline.class - Interactive command line for ba.sh TUI applications
 
 # Properties array
-__COMMANDLINE___properties=()
+declare -Ag __COMMANDLINE___properties=()
 
 __COMMANDLINE__.property(){
-    # Property indices
-    local row=0
-    local col=1
-    local width=2
-    local prompt=3
-    local text=4
-    local cursor_pos=5
-    local history_pos=6
-    local message_broker=7
-    
     if [ "$2" = "=" ]; then
         __COMMANDLINE___properties[$1]="$3"
     else
@@ -113,7 +103,6 @@ __COMMANDLINE__.process_message(){
             __COMMANDLINE__.render
             ;;
         panel.cursor_moved)
-            # Just reposition the cursor - no full redraw needed
             local row=$(__COMMANDLINE__.row)
             local col=$(__COMMANDLINE__.col)
             local prompt=$(__COMMANDLINE__.prompt)
@@ -144,27 +133,20 @@ __COMMANDLINE__.render(){
     local prompt=$(__COMMANDLINE__.prompt)
     local text=$(__COMMANDLINE__.text)
     local cursor_pos=$(__COMMANDLINE__.cursor_pos)
-    
-    # Move to position
+
     tui.cursor.move $row $col
-    
-    # Set colors (black background, white text)
     tui.color.bg_black
     tui.color.bright_white
-    
-    # Calculate available space for text
+
     local prompt_len=${#prompt}
     local text_width=$((width - prompt_len))
-    
-    # Print prompt
+
     printf "%s" "$prompt"
-    
-    # Calculate visible portion of text (scroll if needed)
+
     local visible_text="$text"
     local display_cursor=$cursor_pos
-    
+
     if [ ${#text} -gt $text_width ]; then
-        # Text is longer than available space - need to scroll
         local scroll_offset=0
         if [ $cursor_pos -ge $text_width ]; then
             scroll_offset=$((cursor_pos - text_width + 1))
@@ -172,15 +154,12 @@ __COMMANDLINE__.render(){
         visible_text="${text:$scroll_offset:$text_width}"
         display_cursor=$((cursor_pos - scroll_offset))
     fi
-    
-    # Print text and fill remaining space
+
     printf "%-${text_width}s" "$visible_text"
-    
-    # Position cursor and show as blinking underline
+
     tui.cursor.move $row $((col + prompt_len + display_cursor))
     tui.cursor.style.blinking_underline
     tui.cursor.show
-
     tui.color.reset
 }
 
@@ -189,33 +168,27 @@ __COMMANDLINE__.insert(){
     local char="$1"
     local text=$(__COMMANDLINE__.text)
     local cursor_pos=$(__COMMANDLINE__.cursor_pos)
-    
-    # Insert character at cursor position
+
     local before="${text:0:$cursor_pos}"
     local after="${text:$cursor_pos}"
     __COMMANDLINE__.text = "${before}${char}${after}"
-    
-    # Move cursor forward
     __COMMANDLINE__.cursor_pos = $((cursor_pos + 1))
-    
+
     __COMMANDLINE__.render
 }
 
-# Append a string at cursor position
+# Append a string at cursor position, with space after
 __COMMANDLINE__.append(){
     local str="$1"
     local text=$(__COMMANDLINE__.text)
     local cursor_pos=$(__COMMANDLINE__.cursor_pos)
-    
-    # Insert string at cursor position, with space after
+
     local before="${text:0:$cursor_pos}"
     local after="${text:$cursor_pos}"
-    
+
     __COMMANDLINE__.text = "${before}${str} ${after}"
-    
-    # Move cursor after inserted string and space
     __COMMANDLINE__.cursor_pos = $((cursor_pos + ${#str} + 1))
-    
+
     __COMMANDLINE__.render
 }
 
@@ -223,7 +196,7 @@ __COMMANDLINE__.append(){
 __COMMANDLINE__.delete(){
     local text=$(__COMMANDLINE__.text)
     local cursor_pos=$(__COMMANDLINE__.cursor_pos)
-    
+
     if [ $cursor_pos -gt 0 ]; then
         local before="${text:0:$((cursor_pos - 1))}"
         local after="${text:$cursor_pos}"
@@ -237,7 +210,7 @@ __COMMANDLINE__.delete(){
 __COMMANDLINE__.delete_forward(){
     local text=$(__COMMANDLINE__.text)
     local cursor_pos=$(__COMMANDLINE__.cursor_pos)
-    
+
     if [ $cursor_pos -lt ${#text} ]; then
         local before="${text:0:$cursor_pos}"
         local after="${text:$((cursor_pos + 1))}"
@@ -251,7 +224,7 @@ __COMMANDLINE__.move_cursor(){
     local direction="$1"
     local text=$(__COMMANDLINE__.text)
     local cursor_pos=$(__COMMANDLINE__.cursor_pos)
-    
+
     case "$direction" in
         LEFT)
             if [ $cursor_pos -gt 0 ]; then
@@ -280,16 +253,15 @@ __COMMANDLINE__.move_cursor(){
 __COMMANDLINE__.history_prev(){
     local history_count=${#__COMMANDLINE___history[@]}
     local history_pos=$(__COMMANDLINE__.history_pos)
-    
+
     if [ $history_count -eq 0 ]; then
         return
     fi
-    
-    # First time pressing up - start from end of history
+
     if [ $history_pos -eq -1 ]; then
         history_pos=$history_count
     fi
-    
+
     if [ $history_pos -gt 0 ]; then
         history_pos=$((history_pos - 1))
         __COMMANDLINE__.history_pos = $history_pos
@@ -303,11 +275,11 @@ __COMMANDLINE__.history_prev(){
 __COMMANDLINE__.history_next(){
     local history_count=${#__COMMANDLINE___history[@]}
     local history_pos=$(__COMMANDLINE__.history_pos)
-    
+
     if [ $history_pos -eq -1 ]; then
         return
     fi
-    
+
     if [ $history_pos -lt $((history_count - 1)) ]; then
         history_pos=$((history_pos + 1))
         __COMMANDLINE__.history_pos = $history_pos
@@ -315,7 +287,6 @@ __COMMANDLINE__.history_next(){
         __COMMANDLINE__.cursor_pos = ${#__COMMANDLINE___history[$history_pos]}
         __COMMANDLINE__.render
     else
-        # Past end of history - clear line
         __COMMANDLINE__.history_pos = -1
         __COMMANDLINE__.text = ""
         __COMMANDLINE__.cursor_pos = 0
@@ -326,20 +297,17 @@ __COMMANDLINE__.history_next(){
 # Execute command and add to history
 __COMMANDLINE__.execute(){
     local text=$(__COMMANDLINE__.text)
-    
-    # Add to history if not empty and different from last command
+
     if [ -n "$text" ]; then
         local last_cmd=""
         if [ ${#__COMMANDLINE___history[@]} -gt 0 ]; then
             last_cmd="${__COMMANDLINE___history[-1]}"
         fi
-        
         if [ "$text" != "$last_cmd" ]; then
             __COMMANDLINE___history+=("$text")
         fi
     fi
-    
-    # Return the command text
+
     echo "$text"
 }
 

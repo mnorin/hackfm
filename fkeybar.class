@@ -1,13 +1,9 @@
 #!/bin/bash
 # fkeybar.class - Function key bar (MC style) using ba.sh
 
-__FKEYBAR___properties=()
+declare -Ag __FKEYBAR___properties=()
 
 __FKEYBAR__.property(){
-    # Property indices
-    local row=0
-    local width=1
-    
     if [ "$2" = "=" ]; then
         __FKEYBAR___properties[$1]="$3"
     else
@@ -16,21 +12,8 @@ __FKEYBAR__.property(){
 }
 
 # Property accessors
-__FKEYBAR__.row(){
-    if [ "$1" = "=" ]; then
-        __FKEYBAR__.property row = "$2"
-    else
-        __FKEYBAR__.property row
-    fi
-}
-
-__FKEYBAR__.width(){
-    if [ "$1" = "=" ]; then
-        __FKEYBAR__.property width = "$2"
-    else
-        __FKEYBAR__.property width
-    fi
-}
+__FKEYBAR__.row(){   __FKEYBAR__.property row   "$@"; }
+__FKEYBAR__.width(){ __FKEYBAR__.property width "$@"; }
 
 # Key labels array (set via render method)
 declare -ag __FKEYBAR___labels=()
