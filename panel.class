@@ -16,24 +16,9 @@ _PC_BOLD=$(tui.style.bold)
 _PC_REGULAR=$(tui.style.regular)
 _PC_RESET=$(tui.style.reset)
 
-__PANEL___properties=()
+declare -Ag __PANEL___properties=()
 
 __PANEL__.property(){
-    # Property indices
-    local x=0
-    local y=1
-    local width=2
-    local height=3
-    local active=4
-    local search_text=5
-    local mode=6  # "navigation" or "search"
-    local enter_result=7  # Result of last enter operation
-    local list_source=8  # Name of list object (filelist or archivelist instance)
-    local in_archive=9  # 1 if viewing archive, 0 if normal filesystem
-    local archive_path=10  # Path to archive file being viewed
-    local message_broker=11  # Name of msgbroker instance, empty = no broker
-    local dialog=12  # Name of dialog instance for status messages
-    
     if [ "$2" = "=" ]; then
         __PANEL___properties[$1]="$3"
     else
@@ -41,6 +26,91 @@ __PANEL__.property(){
     fi
 }
 
+
+__PANEL__.x(){      __PANEL__.property x      "$@"; }
+__PANEL__.y(){      __PANEL__.property y      "$@"; }
+__PANEL__.width(){  __PANEL__.property width  "$@"; }
+__PANEL__.height(){ __PANEL__.property height "$@"; }
+
+__PANEL__.active(){
+    if [ "$1" = "=" ]; then
+        local old_value=$(__PANEL__.property active)
+        __PANEL__.property active = "$2"
+        # Update only what changes when active status changes
+        if [ "$old_value" != "$2" ]; then
+            # If this is the initial activation (old_value is empty), do full render
+            if [ -z "$old_value" ]; then
+                __PANEL__.prerender_all_rows
+                __PANEL__.render
+            else
+                # Subsequent activations: just update header and cursor row
+                # Update header color
+                __PANEL__.draw_header
+                
+                # Update cursor row (changes color based on active status)
+                local list=$(__PANEL__.list_source)
+                local selected=$($list.selected)
+                __PANEL__.update_rendered_row $selected
+                
+                # Draw the updated cursor row
+                local y=$(__PANEL__.y)
+                local x=$(__PANEL__.x)
+                local scroll=$($list.scroll)
+                local height=$(__PANEL__.height)
+                local max_visible=$((height - 3))
+                local visible_row=$((selected - scroll))
+                
+                if [ $visible_row -ge 0 ] && [ $visible_row -lt $max_visible ]; then
+                    tui.cursor.move $((y + 1 + visible_row)) $((x + 1))
+                    printf '%b' "${__PANEL___rendered_rows[$selected]}"
+                fi
+            fi
+            
+            # Also cd to this panel's directory when becoming active
+            if [ "$2" = "1" ]; then
+                local list=$(__PANEL__.list_source)
+                local path=$($list.path)
+                cd "$path" 2>/dev/null || true
+                __PANEL__._publish_dir
+            fi
+        fi
+    else
+        __PANEL__.property active
+    fi
+}
+
+__PANEL__.search_text(){    __PANEL__.property search_text    "$@"; }
+__PANEL__.enter_result(){   __PANEL__.property enter_result   "$@"; }
+__PANEL__.archive_path(){   __PANEL__.property archive_path   "$@"; }
+__PANEL__.message_broker(){ __PANEL__.property message_broker "$@"; }
+__PANEL__.dialog(){         __PANEL__.property dialog         "$@"; }
+
+__PANEL__.mode(){
+    if [ "$1" = "=" ]; then
+        __PANEL__.property mode = "$2"
+    else
+        local val=$(__PANEL__.property mode)
+        echo "${val:-navigation}"
+    fi
+}
+
+__PANEL__.list_source(){
+    if [ "$1" = "=" ]; then
+        __PANEL__.property list_source = "$2"
+    else
+        local val=$(__PANEL__.property list_source)
+        echo "${val:-__PANEL__.list}"
+    fi
+}
+
+__PANEL__.in_archive(){
+    if [ "$1" = "=" ]; then
+        __PANEL__.property in_archive = "$2"
+    else
+        local val=$(__PANEL__.property in_archive)
+        echo "${val:-0}"
+    fi
+}
 # Array for pre-rendered file rows (cached for performance)
 declare -ag __PANEL___rendered_rows=()
 
@@ -199,152 +269,6 @@ __PANEL__.toggle_selection_and_move(){
 }
 
 # Property accessors
-__PANEL__.x(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property x = "$2"
-    else
-        __PANEL__.property x
-    fi
-}
-
-__PANEL__.y(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property y = "$2"
-    else
-        __PANEL__.property y
-    fi
-}
-
-__PANEL__.width(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property width = "$2"
-    else
-        __PANEL__.property width
-    fi
-}
-
-__PANEL__.height(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property height = "$2"
-    else
-        __PANEL__.property height
-    fi
-}
-
-__PANEL__.active(){
-    if [ "$1" = "=" ]; then
-        local old_value=$(__PANEL__.property active)
-        __PANEL__.property active = "$2"
-        # Update only what changes when active status changes
-        if [ "$old_value" != "$2" ]; then
-            # If this is the initial activation (old_value is empty), do full render
-            if [ -z "$old_value" ]; then
-                __PANEL__.prerender_all_rows
-                __PANEL__.render
-            else
-                # Subsequent activations: just update header and cursor row
-                # Update header color
-                __PANEL__.draw_header
-                
-                # Update cursor row (changes color based on active status)
-                local list=$(__PANEL__.list_source)
-                local selected=$($list.selected)
-                __PANEL__.update_rendered_row $selected
-                
-                # Draw the updated cursor row
-                local y=$(__PANEL__.y)
-                local x=$(__PANEL__.x)
-                local scroll=$($list.scroll)
-                local height=$(__PANEL__.height)
-                local max_visible=$((height - 3))
-                local visible_row=$((selected - scroll))
-                
-                if [ $visible_row -ge 0 ] && [ $visible_row -lt $max_visible ]; then
-                    tui.cursor.move $((y + 1 + visible_row)) $((x + 1))
-                    printf '%b' "${__PANEL___rendered_rows[$selected]}"
-                fi
-            fi
-            
-            # Also cd to this panel's directory when becoming active
-            if [ "$2" = "1" ]; then
-                local list=$(__PANEL__.list_source)
-                local path=$($list.path)
-                cd "$path" 2>/dev/null || true
-                __PANEL__._publish_dir
-            fi
-        fi
-    else
-        __PANEL__.property active
-    fi
-}
-
-__PANEL__.search_text(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property search_text = "$2"
-    else
-        __PANEL__.property search_text
-    fi
-}
-
-__PANEL__.mode(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property mode = "$2"
-    else
-        local val=$(__PANEL__.property mode)
-        echo "${val:-navigation}"
-    fi
-}
-
-__PANEL__.enter_result(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property enter_result = "$2"
-    else
-        __PANEL__.property enter_result
-    fi
-}
-
-__PANEL__.list_source(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property list_source = "$2"
-    else
-        local val=$(__PANEL__.property list_source)
-        # Default to .list if not set
-        echo "${val:-__PANEL__.list}"
-    fi
-}
-
-__PANEL__.in_archive(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property in_archive = "$2"
-    else
-        local val=$(__PANEL__.property in_archive)
-        echo "${val:-0}"
-    fi
-}
-
-__PANEL__.archive_path(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property archive_path = "$2"
-    else
-        __PANEL__.property archive_path
-    fi
-}
-
-__PANEL__.message_broker(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property message_broker = "$2"
-    else
-        __PANEL__.property message_broker
-    fi
-}
-
-__PANEL__.dialog(){
-    if [ "$1" = "=" ]; then
-        __PANEL__.property dialog = "$2"
-    else
-        __PANEL__.property dialog
-    fi
-}
 
 # Publish current directory to broker (only when active and broker is set)
 __PANEL__._publish_dir(){

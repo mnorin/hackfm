@@ -1,17 +1,9 @@
 #!/bin/bash
 # filelist.class - File listing using ba.sh
 
-__FILELIST___properties=()
+declare -Ag __FILELIST___properties=()
 
 __FILELIST__.property(){
-    # Property indices
-    local path=0
-    local selected=1
-    local scroll=2
-    local marked_size=3
-    local marked_count=4
-    local sort_order=5
-    
     if [ "$2" = "=" ]; then
         __FILELIST___properties[$1]="$3"
     else
@@ -20,39 +12,12 @@ __FILELIST__.property(){
 }
 
 # Property accessors
-__FILELIST__.path(){
-    if [ "$1" = "=" ]; then
-        __FILELIST__.property path = "$2"
-        # Auto-load when path changes
-        __FILELIST__.load "$2"
-    else
-        __FILELIST__.property path
-    fi
-}
+__FILELIST__.selected(){ __FILELIST__.property selected "$@"; }
+__FILELIST__.scroll(){   __FILELIST__.property scroll   "$@"; }
 
-__FILELIST__.selected(){
-    if [ "$1" = "=" ]; then
-        __FILELIST__.property selected = "$2"
-    else
-        __FILELIST__.property selected
-    fi
-}
-
-__FILELIST__.scroll(){
-    if [ "$1" = "=" ]; then
-        __FILELIST__.property scroll = "$2"
-    else
-        __FILELIST__.property scroll
-    fi
-}
-
-__FILELIST__.marked_size(){
-    __FILELIST__.property marked_size
-}
-
-__FILELIST__.marked_count(){
-    __FILELIST__.property marked_count
-}
+# Read-only computed properties
+__FILELIST__.marked_size(){  __FILELIST__.property marked_size; }
+__FILELIST__.marked_count(){ __FILELIST__.property marked_count; }
 
 __FILELIST__.sort_order(){
     if [ "$1" = "=" ]; then
@@ -60,6 +25,16 @@ __FILELIST__.sort_order(){
     else
         local val=$(__FILELIST__.property sort_order)
         echo "${val:-name_asc}"
+    fi
+}
+
+__FILELIST__.path(){
+    if [ "$1" = "=" ]; then
+        __FILELIST__.property path = "$2"
+        # Auto-load when path changes
+        __FILELIST__.load "$2"
+    else
+        __FILELIST__.property path
     fi
 }
 

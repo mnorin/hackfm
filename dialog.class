@@ -3,15 +3,9 @@
 
 # Note: TUI components should be loaded by the main application before using dialog
 
-__DIALOG___properties=()
+declare -Ag __DIALOG___properties=()
 
 __DIALOG__.property(){
-    # Property indices
-    local title=0
-    local message=1
-    local input_value=2
-    local result=3
-    
     if [ "$2" = "=" ]; then
         __DIALOG___properties[$1]="$3"
     else
@@ -19,38 +13,11 @@ __DIALOG__.property(){
     fi
 }
 
-# Property accessors
-__DIALOG__.title(){
-    if [ "$1" = "=" ]; then
-        __DIALOG__.property title = "$2"
-    else
-        __DIALOG__.property title
-    fi
-}
-
-__DIALOG__.message(){
-    if [ "$1" = "=" ]; then
-        __DIALOG__.property message = "$2"
-    else
-        __DIALOG__.property message
-    fi
-}
-
-__DIALOG__.input_value(){
-    if [ "$1" = "=" ]; then
-        __DIALOG__.property input_value = "$2"
-    else
-        __DIALOG__.property input_value
-    fi
-}
-
-__DIALOG__.result(){
-    if [ "$1" = "=" ]; then
-        __DIALOG__.property result = "$2"
-    else
-        __DIALOG__.property result
-    fi
-}
+# Property accessors (pure pass-throughs - no defaults or validation)
+__DIALOG__.title(){       __DIALOG__.property title       "$@"; }
+__DIALOG__.message(){     __DIALOG__.property message     "$@"; }
+__DIALOG__.input_value(){ __DIALOG__.property input_value "$@"; }
+__DIALOG__.result(){      __DIALOG__.property result      "$@"; }
 
 # Show input dialog - returns 0 if OK, 1 if Cancel
 # Usage: dialog.show_input "Title" "Message" "default_value"
