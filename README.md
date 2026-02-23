@@ -61,7 +61,7 @@ Press Enter on an archive to navigate inside it. Press F5 inside an archive to e
 ### File Viewer (F3)
 
 - Scroll with arrow keys, Page Up/Down, Home, End
-- Syntax-aware viewing via `conf/view.conf` — map file extensions to external conversion commands (e.g. render markdown, highlight source code)
+- Syntax-aware viewing via conf/view.conf — map file extensions to external conversion commands (e.g. render markdown, highlight source code)
 - Exit with F3, F10
 
 ### Text Editor (F4)
@@ -84,15 +84,14 @@ The command line at the bottom of the screen runs shell commands in the current 
 - Type a command and press Enter to execute
 - **Ctrl+/** — insert the filename under the cursor at the current command line position (useful for building commands like `./script arg1 arg2`)
 - **Ctrl+U** — clear the command line
-- **Ctrl+R** — reload the active panel after a command
 - **Up/Down arrows** — navigate command history (when command line is active)
 
 ### Configuration
 
-#### `conf/ext.conf`
+#### conf/ext.conf
 Maps file extensions to programs to open them with when pressing Enter. Each line: `extension command`.
 
-#### `conf/view.conf`
+#### conf/view.conf
 Maps file extensions to commands for the built-in viewer. Each line: `extension command`. Use `%f` as a placeholder for the file path, or omit it to have the path appended automatically.
 
 ## Keyboard Reference
@@ -119,7 +118,7 @@ Maps file extensions to commands for the built-in viewer. Each line: `extension 
 | Ctrl+/ | Insert filename under cursor into command line |
 | Ctrl+U | Clear command line |
 | Ctrl+R | Reload active panel |
-| Ctrl+S | Quick search in current panel |
+| Ctrl+S | Quick search in current panel (if you terminal intercepts it, press Ctrl-O twice and try again) |
 | Ctrl+O | Toggle terminal session |
 | ESC | Clear command line |
 
@@ -149,9 +148,9 @@ Maps file extensions to commands for the built-in viewer. Each line: `extension 
 
 ## TODO
 
-- Extracting files from archives
+- Extracting files from archives (needs improving)
 - User menu (F2)
 - Multiple functional key layers
-- Centralized configuration
-- Massive refactoring
-- Performance improvements
+- Centralized configuration (in progress)
+- Massive refactoring of the main script
+- Performance improvements (still things to be improved)
