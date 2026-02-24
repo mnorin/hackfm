@@ -15,8 +15,11 @@ __VIEWER__.property(){
 }
 
 # Property accessors
-__VIEWER__.filepath(){ __VIEWER__.property filepath "$@"; }
-__VIEWER__.scroll(){   __VIEWER__.property scroll   "$@"; }
+__VIEWER__.filepath(){     __VIEWER__.property filepath     "$@"; }
+__VIEWER__.scroll(){       __VIEWER__.property scroll       "$@"; }
+__VIEWER__.file_offset(){  __VIEWER__.property file_offset  "$@"; }
+__VIEWER__.file_total(){   __VIEWER__.property file_total   "$@"; }
+__VIEWER__.use_window(){   __VIEWER__.property use_window   "$@"; }
 
 __VIEWER__.appframe_created(){
     if [ "$1" = "=" ]; then
@@ -27,23 +30,40 @@ __VIEWER__.appframe_created(){
     fi
 }
 
-# File lines array
+# File lines array (windowed buffer)
 declare -ag __VIEWER___lines=()
 
-# Load file - checks view.conf for a text-conversion handler first,
-# falls back to reading the file directly if no handler or command not found
+# Window constants
+VIEWER_WINDOW_SIZE=1000       # max lines kept in buffer
+VIEWER_LOAD_THRESHOLD=200     # load more when within this many lines of buffer edge
+
+# ============================================================================
+# Line processing helper - strip control chars, keep tab
+# ============================================================================
+__VIEWER__._process_line(){
+    local line="$1"
+    line="${line%$'\r'}"
+    line="${line//$'\f'/}"
+    printf '%s' "$line" | tr '\000-\010\013-\037\177' '.'
+}
+
+# ============================================================================
+# Load
+# ============================================================================
+
 __VIEWER__.load(){
     local filepath="$1"
     local ext="${filepath##*.}"
-    ext="${ext,,}"  # lowercase
+    ext="${ext,,}"
 
     __VIEWER__.filepath = "$filepath"
     __VIEWER___lines=()
     __VIEWER__.scroll = 0
+    __VIEWER__.file_offset = 0
+    __VIEWER__.file_total = ""
+    __VIEWER__.use_window = 0
 
-    # Check view.conf for a handler for this extension (read fresh each time)
-    # Full line after the extension is the command template; %f is replaced with
-    # the filepath, or filepath is appended if %f is absent
+    # Check view.conf for a handler
     local handler=""
     local view_conf="$HACKFM_DIR/conf/view.conf"
     if [ -f "$view_conf" ]; then
@@ -51,7 +71,6 @@ __VIEWER__.load(){
             [[ -z "$conf_line" || "$conf_line" == \#* ]] && continue
             local conf_ext="${conf_line%% *}"
             local conf_cmd="${conf_line#*[[:space:]]}"
-            # Trim leading whitespace (config uses spaces for alignment)
             while [[ "$conf_cmd" == [[:space:]]* ]]; do conf_cmd="${conf_cmd#?}"; done
             if [ "${conf_ext,,}" = "$ext" ]; then
                 handler="$conf_cmd"
@@ -60,7 +79,7 @@ __VIEWER__.load(){
         done < "$view_conf"
     fi
 
-    # Build and run the command - substitute %f or append filepath
+    # Handler path - load fully (handlers are usually for small/transformed files)
     local use_handler=0
     if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
         local cmd
@@ -71,130 +90,205 @@ __VIEWER__.load(){
         fi
 
         while IFS= read -r line; do
-            line="${line%$'\r'}"
-            # Replace form feed (page break) with empty line
-            line="${line//$'\f'/}"
-            # Strip control chars (keep tab - expanded at display time)
-            line=$(printf '%s' "$line" | tr '\000-\010\013-\037\177' '.')
-            __VIEWER___lines+=("$line")
+            local processed
+            processed=$(__VIEWER__._process_line "$line")
+            __VIEWER___lines+=("$processed")
         done < <(eval "$cmd" 2>/dev/null)
 
         [ ${#__VIEWER___lines[@]} -gt 0 ] && use_handler=1
     fi
 
-    # Direct file read (fallback or no handler)
+    # Direct file read
     if [ $use_handler -eq 0 ]; then
         __VIEWER___lines=()
-        # Detect binary files - check for null bytes in first 8KB
+
+        # Binary file check
         if LC_ALL=C grep -qP '\x00' <(head -c 8192 "$filepath" 2>/dev/null) 2>/dev/null; then
             local size=$(stat -c '%s' "$filepath" 2>/dev/null || echo "unknown")
             local mime=$(file -b --mime-type "$filepath" 2>/dev/null || echo "unknown")
-            __VIEWER___lines+=("[Binary file]")
-            __VIEWER___lines+=("")
-            __VIEWER___lines+=("  Type: $mime")
-            __VIEWER___lines+=("  Size: $size bytes")
-            __VIEWER___lines+=("")
-            __VIEWER___lines+=("  No viewer configured for this file type.")
-            __VIEWER___lines+=("  Add an entry to \$HACKFM_DIR/conf/view.conf to handle it.")
+            __VIEWER___lines+=("[Binary file]" "" "  Type: $mime" "  Size: $size bytes" "" \
+                "  No viewer configured for this file type." \
+                "  Add an entry to \$HACKFM_DIR/conf/view.conf to handle it.")
         else
-            while IFS= read -r line; do
-                line="${line%$'\r'}"
-                line=$(printf '%s' "$line" | tr '\000-\010\013-\037\177' '.')
-                __VIEWER___lines+=("$line")
-            done < "$filepath"
+            # Count total lines upfront (fast - just wc)
+            local total=$(wc -l < "$filepath" 2>/dev/null || echo "0")
+            # wc -l counts newlines, so a file with no trailing newline needs +1
+            # Use awk for accuracy
+            total=$(awk 'END{print NR}' "$filepath" 2>/dev/null || echo "0")
+            __VIEWER__.file_total = "$total"
+
+            if [ "$total" -le "$VIEWER_WINDOW_SIZE" ]; then
+                # Small file - load fully, no windowing needed
+                while IFS= read -r line; do
+                    local processed
+                    processed=$(__VIEWER__._process_line "$line")
+                    __VIEWER___lines+=("$processed")
+                done < "$filepath"
+            else
+                # Large file - use windowed loading
+                __VIEWER__.use_window = 1
+                __VIEWER__._load_window 0
+            fi
         fi
     fi
 }
 
+# Load a window of lines starting at file line $1 (0-based)
+# Fills __VIEWER___lines with up to VIEWER_WINDOW_SIZE lines
+__VIEWER__._load_window(){
+    local from_line="$1"
+    local filepath=$(__VIEWER__.filepath)
+    local total=$(__VIEWER__.file_total)
 
-__VIEWER__.display_content(){
-        local row=2
-        for ((i=scroll; i<scroll+max_rows && i<total_lines; i++)); do
-            tui.cursor.move $row 1
-            tui.color.bg_blue
-            tui.color.white
+    # Clamp to valid range
+    [ "$from_line" -lt 0 ] && from_line=0
+    local max_start=$(( total - VIEWER_WINDOW_SIZE ))
+    [ $max_start -lt 0 ] && max_start=0
+    [ "$from_line" -gt "$max_start" ] && from_line=$max_start
 
-            # Truncate long lines - use cut for byte-safe truncation
-            local display_line="${__VIEWER___lines[$i]}"
-            # Expand tabs to spaces at display time only
-            display_line="${display_line//$'\t'/        }"
-            local display_len=$(printf '%s' "$display_line" | wc -m)
-            if [ "$display_len" -gt "$cols" ]; then
-                display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
-                display_line+="..."
-            fi
+    __VIEWER___lines=()
+    __VIEWER__.file_offset = "$from_line"
 
-            printf '%s' "$display_line"
-            # Clear to end of line - handles multi-byte chars correctly
-            printf '\033[K'
-            tui.style.reset
-            ((row++)) || true
-        done
+    local skip=$from_line
+    local count=0
 
-        # Fill any remaining rows below content with solid blue
-        while [ $row -le $((max_rows + 1)) ]; do
-            tui.cursor.move $row 1
-            tui.color.bg_blue
-            printf '\033[K'
-            tui.style.reset
-            ((row++)) || true
-        done
+    while IFS= read -r line; do
+        local processed
+        processed=$(__VIEWER__._process_line "$line")
+        __VIEWER___lines+=("$processed")
+        count=$(( count + 1 ))
+        [ $count -ge $VIEWER_WINDOW_SIZE ] && break
+    done < <(tail -n +"$((skip + 1))" "$filepath" 2>/dev/null)
 }
 
-# Show viewer (blocking - runs until user exits)
+# ============================================================================
+# Display
+# ============================================================================
+
+__VIEWER__.display_content(){
+    local row=2
+    local file_offset=$(__VIEWER__.file_offset)
+
+    # Set blue background once for the entire content area
+    tui.color.bg_blue
+    tui.color.white
+
+    for ((i=scroll; i<scroll+max_rows && i<total_lines; i++)); do
+        local arr_idx=$(( i - file_offset ))
+        tui.cursor.move $row 1
+
+        local display_line="${__VIEWER___lines[$arr_idx]}"
+        display_line="${display_line//$'\t'/        }"
+        local display_len=$(printf '%s' "$display_line" | wc -m)
+        if [ "$display_len" -gt "$cols" ]; then
+            display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
+            display_line+="..."
+        fi
+
+        printf '%s' "$display_line"
+        printf '\033[K'
+        row=$(( row + 1 ))
+    done
+
+    # Fill remaining rows with blue (never past fkey bar)
+    local content_end=$(( rows - 1 ))
+    while [ $row -le $content_end ]; do
+        tui.cursor.move $row 1
+        printf '\033[K'
+        row=$(( row + 1 ))
+    done
+
+    tui.style.reset
+}
+
+# Check if we need to slide the window and do so
+__VIEWER__._check_window(){
+    local use_window=$(__VIEWER__.use_window)
+    [ "$use_window" != "1" ] && return
+
+    local file_offset=$(__VIEWER__.file_offset)
+    local arr_size=${#__VIEWER___lines[@]}
+    local arr_scroll=$(( scroll - file_offset ))
+
+    # Near bottom edge - slide window down
+    if [ $(( arr_size - arr_scroll )) -lt $VIEWER_LOAD_THRESHOLD ] && \
+       [ $(( file_offset + arr_size )) -lt $total_lines ]; then
+        # New window starts VIEWER_LOAD_THRESHOLD lines before current scroll
+        local new_offset=$(( scroll - VIEWER_LOAD_THRESHOLD ))
+        __VIEWER__._load_window "$new_offset"
+        return
+    fi
+
+    # Near top edge - slide window up
+    if [ "$arr_scroll" -lt $VIEWER_LOAD_THRESHOLD ] && [ "$file_offset" -gt 0 ]; then
+        local new_offset=$(( scroll - VIEWER_WINDOW_SIZE + VIEWER_LOAD_THRESHOLD ))
+        __VIEWER__._load_window "$new_offset"
+        return
+    fi
+}
+
+# ============================================================================
+# Show (blocking)
+# ============================================================================
+
 __VIEWER__.show(){
     local filepath=$(__VIEWER__.filepath)
     local filename=$(basename "$filepath")
-    
-    # Check if file is loaded
+
     if [ -z "$filepath" ]; then
         return 1
     fi
-    
-    # Create appframe if not already created
+
     local appframe_created=$(__VIEWER__.appframe_created)
     if [ $appframe_created -eq 0 ]; then
         appframe __VIEWER___appframe
         __VIEWER__.appframe_created = 1
     fi
-    
-    # Configure appframe
+
     __VIEWER___appframe.title = " File: $filename"
     __VIEWER___appframe.show_cursor = 0
-    
-    # Setup
     __VIEWER___appframe.setup
-    
-    # Get dimensions
+
     local rows=$(__VIEWER___appframe.rows)
     local cols=$(__VIEWER___appframe.cols)
     local content_height=$(__VIEWER___appframe.main_height)
-    local total_lines=${#__VIEWER___lines[@]}
-    
+    local use_window=$(__VIEWER__.use_window)
+    local file_offset=$(__VIEWER__.file_offset)
+
+    # total_lines: for windowed mode use file_total, otherwise array size
+    local total_lines
+    if [ "$use_window" = "1" ]; then
+        total_lines=$(__VIEWER__.file_total)
+    else
+        total_lines=${#__VIEWER___lines[@]}
+    fi
+
     __VIEWER___appframe.draw_frame_blue "Help" "" "Quit" "" "" "" "" "" "" "Quit"
 
-    # Empty file check
-    if [ ${#__VIEWER___lines[@]} -eq 0 ]; then
+    # Disable line wrap and lock scroll region to content area only.
+    # This means no stray output or implicit terminal scroll can ever touch
+    # the fkey bar at row $rows — it is physically outside the scroll region.
+    tui.screen.wrap_off
+    tui.region.set 2 $((rows - 1))
+
+    if [ "$total_lines" -eq 0 ]; then
         tui.cursor.move 3 1
         tui.color.bg_blue
         tui.color.white
         echo "<empty file>"
         tui.color.reset
     fi
-    
-    # Viewer loop
+
     local scroll=$(__VIEWER__.scroll)
     local max_rows=$content_height
-    
+
     __VIEWER__.display_content
 
     while true; do
-        # Update title with line info
         local current_line=$((scroll + 1))
         __VIEWER___appframe.title = " File: $filename | Line $current_line/$total_lines"
         __VIEWER___appframe.draw_title
-        
-        # Input
+
         local key=$(tui.input.key)
         local old_scroll=$scroll
 
@@ -203,10 +297,10 @@ __VIEWER__.show(){
                 break
                 ;;
             UP)
-                [ $scroll -gt 0 ] && ((scroll--))
+                [ $scroll -gt 0 ] && scroll=$(( scroll - 1 ))
                 ;;
             DOWN)
-                [ $scroll -lt $((total_lines - max_rows)) ] && ((scroll++)) || true
+                [ $scroll -lt $((total_lines - max_rows)) ] && scroll=$(( scroll + 1 )) || true
                 ;;
             PAGEUP)
                 scroll=$((scroll - max_rows))
@@ -225,31 +319,51 @@ __VIEWER__.show(){
                 scroll=$((total_lines - max_rows))
                 [ $scroll -lt 0 ] && scroll=0
                 ;;
-
         esac
-        
-        # Optimize redraw for single-line scroll
+
+        # Check if window needs sliding (no-op for fully loaded files)
+        local old_offset=$file_offset
+        __VIEWER__._check_window
+        # Refresh locals that may have changed after window slide
+        file_offset=$(__VIEWER__.file_offset)
+        local window_slid=0
+        [ "$file_offset" != "$old_offset" ] && window_slid=1
+
         local scroll_delta=$((scroll - old_scroll))
-        
-        if [ $scroll_delta -eq 1 ]; then
-            # Scrolled DOWN by 1 - use scroll region
-            tui.cursor.hide
-            
-            # Set scroll region (content area: rows 2 to rows-1)
-            local region_bottom=$((rows - 1))
-            tui.region.set 2 $region_bottom
-            
-            # Move to bottom and scroll up (content moves up)
-            tui.cursor.move $region_bottom 1
-            tui.region.scroll_up
-            
-            # Draw new bottom line
-            local new_line_idx=$((scroll + max_rows - 1))
-            if [ $new_line_idx -lt $total_lines ]; then
-                tui.cursor.move $region_bottom 1
+
+        if [ $window_slid -eq 1 ] || [ $scroll_delta -ne 0 ]; then
+            if [ $window_slid -eq 0 ] && [ $scroll_delta -eq 1 ]; then
+                # Scrolled down by 1 - scroll region up, draw new bottom line
                 tui.color.bg_blue
                 tui.color.white
-                local display_line="${__VIEWER___lines[$new_line_idx]}"
+                tui.cursor.move $((rows - 1)) 1
+                tui.region.scroll_up
+                local new_line_idx=$((scroll + max_rows - 1))
+                if [ $new_line_idx -lt $total_lines ]; then
+                    local arr_idx=$(( new_line_idx - file_offset ))
+                    tui.cursor.move $((rows - 1)) 1
+                    local display_line="${__VIEWER___lines[$arr_idx]}"
+                    display_line="${display_line//$'\t'/        }"
+                    local display_len=$(printf '%s' "$display_line" | wc -m)
+                    if [ "$display_len" -gt "$cols" ]; then
+                        display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
+                        display_line+="..."
+                    fi
+                    printf '%s' "$display_line"
+                    printf '\033[K'
+                fi
+                tui.style.reset
+
+            elif [ $window_slid -eq 0 ] && [ $scroll_delta -eq -1 ]; then
+                # Scrolled up by 1 - scroll region down, draw new top line
+                tui.color.bg_blue
+                tui.color.white
+                tui.cursor.move 2 1
+                tui.region.scroll_down
+                local arr_idx=$(( scroll - file_offset ))
+                tui.cursor.move 2 1
+                local display_line="${__VIEWER___lines[$arr_idx]}"
+                display_line="${display_line//$'\t'/        }"
                 local display_len=$(printf '%s' "$display_line" | wc -m)
                 if [ "$display_len" -gt "$cols" ]; then
                     display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
@@ -258,53 +372,22 @@ __VIEWER__.show(){
                 printf '%s' "$display_line"
                 printf '\033[K'
                 tui.style.reset
+
+            else
+                # Page jump or window slide - full redraw
+                __VIEWER__.display_content
             fi
-            
-            # Reset scroll region
-            tui.region.reset
-            
-        elif [ $scroll_delta -eq -1 ]; then
-            # Scrolled UP by 1 - use scroll region
-            tui.cursor.hide
-            
-            # Set scroll region (content area: rows 2 to rows-1)
-            local region_bottom=$((rows - 1))
-            tui.region.set 2 $region_bottom
-            
-            # Move to top and scroll down (content moves down)
-            tui.cursor.move 2 1
-            tui.region.scroll_down
-            
-            # Draw new top line
-            tui.cursor.move 2 1
-            tui.color.bg_blue
-            tui.color.white
-            local display_line="${__VIEWER___lines[$scroll]}"
-            local display_len=$(printf '%s' "$display_line" | wc -m)
-            if [ "$display_len" -gt "$cols" ]; then
-                display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
-                display_line+="..."
-            fi
-            printf '%s' "$display_line"
-            printf '\033[K'
-            tui.style.reset
-            
-            # Reset scroll region
-            tui.region.reset
-            
-        elif [ $scroll_delta -ne 0 ]; then
-            __VIEWER__.display_content
         fi
     done
-    
-    # Save scroll position
+
     __VIEWER__.scroll = $scroll
-    
-    # Cleanup
-    # __VIEWER___appframe.cleanup
+
+    # Restore terminal state
+    tui.region.reset
+    tui.screen.wrap_on
 }
 
-# Open file (convenience method that loads and shows)
+# Open file (convenience method)
 __VIEWER__.open(){
     local filepath="$1"
     __VIEWER__.load "$filepath"
