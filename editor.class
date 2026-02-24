@@ -159,7 +159,7 @@ __EDITOR__.draw_content(){
     for ((i=0; i<EDITOR_VIEWPORT_HEIGHT; i++)); do
         local file_row=$((viewport_top + i))
         __EDITOR__.draw_line $screen_row $file_row
-        ((screen_row++))
+        screen_row=$(( screen_row + 1 ))
     done
     
     tui.style.reset
