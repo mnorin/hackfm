@@ -187,7 +187,7 @@ __ARCHIVELIST__._load_full_archive(){
                 local line_count=0
                 
                 while IFS= read -r line; do
-                    ((line_count++))
+                    line_count=$(( line_count + 1 ))
                     
                     # Find separator line with dashes
                     if [[ "$line" =~ ^-{10,} ]]; then
@@ -197,7 +197,7 @@ __ARCHIVELIST__._load_full_archive(){
                             # Find where last dash section starts
                             local temp="${separator_line% -*}"
                             filename_pos=${#temp}
-                            ((filename_pos++))
+                            filename_pos=$(( filename_pos + 1 ))
                             in_listing=1
                             continue
                         else
