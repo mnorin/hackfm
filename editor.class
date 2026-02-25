@@ -132,60 +132,54 @@ __EDITOR__.draw_help(){
     __EDITOR___appframe.draw_fkeys "Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit"
 }
 
+# Draw context - populated once by _prepare_draw_ctx, read by draw_line.
+# Avoids repeated property subshell calls when drawing multiple lines.
+declare -Ag __EDITOR___ctx=()
+
+__EDITOR__._prepare_draw_ctx(){
+    __EDITOR___ctx[viewport_left]=$(__EDITOR__.viewport_left)
+    __EDITOR___ctx[sel_active]=$(__EDITOR__.selection_active)
+    __EDITOR___ctx[sel_start_row]=$(__EDITOR__.selection_start_row)
+    __EDITOR___ctx[sel_start_col]=$(__EDITOR__.selection_start_col)
+    __EDITOR___ctx[sel_end_row]=$(__EDITOR__.selection_end_row)
+    __EDITOR___ctx[sel_end_col]=$(__EDITOR__.selection_end_col)
+    # Normalize selection order
+    if [ "${__EDITOR___ctx[sel_active]}" -eq 1 ]; then
+        local ssr=${__EDITOR___ctx[sel_start_row]} ssc=${__EDITOR___ctx[sel_start_col]}
+        local ser=${__EDITOR___ctx[sel_end_row]}   sec=${__EDITOR___ctx[sel_end_col]}
+        if [ $ssr -gt $ser ] || ([ $ssr -eq $ser ] && [ $ssc -gt $sec ]); then
+            __EDITOR___ctx[sel_start_row]=$ser; __EDITOR___ctx[sel_start_col]=$sec
+            __EDITOR___ctx[sel_end_row]=$ssr;   __EDITOR___ctx[sel_end_col]=$ssc
+        fi
+    fi
+}
+
 # Draw content
 __EDITOR__.draw_content(){
     tui.cursor.hide
-    
     local viewport_top=$(__EDITOR__.viewport_top)
-    local viewport_left=$(__EDITOR__.viewport_left)
-    
-    # Get selection bounds if active
-    local sel_active=$(__EDITOR__.selection_active)
-    local sel_start_row=$(__EDITOR__.selection_start_row)
-    local sel_start_col=$(__EDITOR__.selection_start_col)
-    local sel_end_row=$(__EDITOR__.selection_end_row)
-    local sel_end_col=$(__EDITOR__.selection_end_col)
-    
-    # Normalize selection (ensure start is before end)
-    if [ $sel_active -eq 1 ]; then
-        if [ $sel_start_row -gt $sel_end_row ] || ([ $sel_start_row -eq $sel_end_row ] && [ $sel_start_col -gt $sel_end_col ]); then
-            local tmp=$sel_start_row; sel_start_row=$sel_end_row; sel_end_row=$tmp
-            tmp=$sel_start_col; sel_start_col=$sel_end_col; sel_end_col=$tmp
-        fi
-    fi
-    
+    __EDITOR__._prepare_draw_ctx
+
     local screen_row=$EDITOR_START_ROW
-    
     for ((i=0; i<EDITOR_VIEWPORT_HEIGHT; i++)); do
-        local file_row=$((viewport_top + i))
-        __EDITOR__.draw_line $screen_row $file_row
+        __EDITOR__.draw_line $screen_row $((viewport_top + i))
         screen_row=$(( screen_row + 1 ))
     done
-    
+
     tui.style.reset
 }
 
-# Draw a single line at a specific screen row
+# Draw a single line. Reads display context from __EDITOR___ctx.
+# Args: screen_row file_row
 __EDITOR__.draw_line(){
     local screen_row=$1
     local file_row=$2
-
-    local viewport_left=$(__EDITOR__.viewport_left)
-
-    # Get selection bounds if active
-    local sel_active=$(__EDITOR__.selection_active)
-    local sel_start_row=$(__EDITOR__.selection_start_row)
-    local sel_start_col=$(__EDITOR__.selection_start_col)
-    local sel_end_row=$(__EDITOR__.selection_end_row)
-    local sel_end_col=$(__EDITOR__.selection_end_col)
-
-    # Normalize selection
-    if [ $sel_active -eq 1 ]; then
-        if [ $sel_start_row -gt $sel_end_row ] || ([ $sel_start_row -eq $sel_end_row ] && [ $sel_start_col -gt $sel_end_col ]); then
-            local tmp=$sel_start_row; sel_start_row=$sel_end_row; sel_end_row=$tmp
-            tmp=$sel_start_col; sel_start_col=$sel_end_col; sel_end_col=$tmp
-        fi
-    fi
+    local viewport_left=${__EDITOR___ctx[viewport_left]}
+    local sel_active=${__EDITOR___ctx[sel_active]}
+    local sel_start_row=${__EDITOR___ctx[sel_start_row]}
+    local sel_start_col=${__EDITOR___ctx[sel_start_col]}
+    local sel_end_row=${__EDITOR___ctx[sel_end_row]}
+    local sel_end_col=${__EDITOR___ctx[sel_end_col]}
 
     tui.cursor.move $screen_row 1
     tui.color.bg_blue
@@ -705,6 +699,9 @@ __EDITOR__.show(){
     __EDITOR__.draw_status
     __EDITOR__.draw_content
     __EDITOR__.draw_help
+    # Lock scroll region to content area - protects status row 1 and help row $rows
+    tui.screen.wrap_off
+    tui.region.set $EDITOR_START_ROW $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1))
     __EDITOR__.update_cursor
     
     # Editor loop
@@ -749,42 +746,26 @@ __EDITOR__.show(){
                 # Optimize for single-line vertical scroll
                 if [ "$key" = "UP" ] || [ "$key" = "DOWN" ]; then
                     if [ $viewport_delta -eq 1 ]; then
-                        # Scrolled down by 1 - use scroll region
+                        # Scrolled down by 1 - scroll region up, draw new bottom line
                         tui.cursor.hide
-                        
-                        # Set scroll region (content area)
-                        tui.region.set $EDITOR_START_ROW $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1))
-                        
-                        # Scroll content up
+                        tui.color.bg_blue
+                        tui.color.white
                         tui.cursor.move $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1)) 1
                         tui.region.scroll_up
-                        
-                        # Draw new bottom line
+                        __EDITOR__._prepare_draw_ctx
                         __EDITOR__.draw_line $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1)) $((new_viewport_top + EDITOR_VIEWPORT_HEIGHT - 1))
-                        
-                        # Reset scroll region
-                        tui.region.reset
-                        
                         __EDITOR__.draw_status
                         __EDITOR__.update_cursor
-                        
+
                     elif [ $viewport_delta -eq -1 ]; then
-                        # Scrolled up by 1 - use scroll region
+                        # Scrolled up by 1 - scroll region down, draw new top line
                         tui.cursor.hide
-                        
-                        # Set scroll region
-                        tui.region.set $EDITOR_START_ROW $((EDITOR_START_ROW + EDITOR_VIEWPORT_HEIGHT - 1))
-                        
-                        # Scroll content down
+                        tui.color.bg_blue
+                        tui.color.white
                         tui.cursor.move $EDITOR_START_ROW 1
                         tui.region.scroll_down
-                        
-                        # Draw new top line
+                        __EDITOR__._prepare_draw_ctx
                         __EDITOR__.draw_line $EDITOR_START_ROW $new_viewport_top
-                        
-                        # Reset scroll region
-                        tui.region.reset
-                        
                         __EDITOR__.draw_status
                         __EDITOR__.update_cursor
                         
@@ -847,6 +828,7 @@ __EDITOR__.show(){
                 if [ $pre_viewport -ne $post_viewport ]; then
                     __EDITOR__.draw_content
                 else
+                    __EDITOR__._prepare_draw_ctx
                     local screen_start=$((EDITOR_START_ROW + pre_row - post_viewport))
                     for ((i=screen_start; i<EDITOR_START_ROW+EDITOR_VIEWPORT_HEIGHT; i++)); do
                         __EDITOR__.draw_line $i $((post_viewport + i - EDITOR_START_ROW))
@@ -868,11 +850,13 @@ __EDITOR__.show(){
                 if [ $pre_viewport -ne $post_viewport ]; then
                     __EDITOR__.draw_content
                 elif [ $pre_col -eq 0 ] && [ $pre_row -gt 0 ]; then
+                    __EDITOR__._prepare_draw_ctx
                     local screen_start=$((EDITOR_START_ROW + post_row - post_viewport))
                     for ((i=screen_start; i<EDITOR_START_ROW+EDITOR_VIEWPORT_HEIGHT; i++)); do
                         __EDITOR__.draw_line $i $((post_viewport + i - EDITOR_START_ROW))
                     done
                 else
+                    __EDITOR__._prepare_draw_ctx
                     local screen_row=$((EDITOR_START_ROW + post_row - post_viewport))
                     __EDITOR__.draw_line $screen_row $post_row
                 fi
@@ -892,11 +876,13 @@ __EDITOR__.show(){
                 if [ $pre_viewport -ne $post_viewport ]; then
                     __EDITOR__.draw_content
                 elif [ $pre_col -eq $pre_line_len ] && [ $pre_row -lt $((${#__EDITOR___lines[@]})) ]; then
+                    __EDITOR__._prepare_draw_ctx
                     local screen_start=$((EDITOR_START_ROW + pre_row - post_viewport))
                     for ((i=screen_start; i<EDITOR_START_ROW+EDITOR_VIEWPORT_HEIGHT; i++)); do
                         __EDITOR__.draw_line $i $((post_viewport + i - EDITOR_START_ROW))
                     done
                 else
+                    __EDITOR__._prepare_draw_ctx
                     local screen_row=$((EDITOR_START_ROW + pre_row - post_viewport))
                     __EDITOR__.draw_line $screen_row $pre_row
                 fi
@@ -1059,6 +1045,7 @@ __EDITOR__.show(){
                     if [ $pre_viewport -ne $post_viewport ]; then
                         __EDITOR__.draw_content
                     else
+                        __EDITOR__._prepare_draw_ctx
                         local screen_row=$((EDITOR_START_ROW + pre_row - post_viewport))
                         __EDITOR__.draw_line $screen_row $pre_row
                     fi
@@ -1070,6 +1057,8 @@ __EDITOR__.show(){
     done
     
     # Cleanup
+    tui.region.reset
+    tui.screen.wrap_on
     __EDITOR___appframe.cleanup
 }
 
