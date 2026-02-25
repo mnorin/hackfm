@@ -459,11 +459,11 @@ __ARCHIVELIST__.extract_files(){
         # Extract everything
         case "$archive_type" in
             tar|tar.gz|tar.bz2|tar.xz)
-                tar -xf "$archive_path" -C "$dest" 2>/dev/null ;;
+                tar -xf "$archive_path" -C "$dest" >/dev/null 2>&1 ;;
             zip)
-                unzip -q "$archive_path" -d "$dest" 2>/dev/null ;;
+                unzip -q "$archive_path" -d "$dest" >/dev/null 2>&1 ;;
             rar)
-                unrar x -y "$archive_path" "$dest/" 2>/dev/null ;;
+                unrar x -y "$archive_path" "$dest/" >/dev/null 2>&1 ;;
             7z)
                 local cmd=""
                 command -v 7z &>/dev/null && cmd="7z"
@@ -472,12 +472,12 @@ __ARCHIVELIST__.extract_files(){
                 [ -n "$cmd" ] && $cmd x "$archive_path" -o"$dest" -y 2>/dev/null ;;
             deb)
                 mkdir -p "$dest/DEBIAN"
-                dpkg-deb --ctrl-tarfile "$archive_path" 2>/dev/null | \
-                    tar -xf - -C "$dest/DEBIAN" 2>/dev/null
-                dpkg-deb -x "$archive_path" "$dest" 2>/dev/null ;;
+                dpkg-deb --ctrl-tarfile "$archive_path" >/dev/null 2>&1 | \
+                    tar -xf - -C "$dest/DEBIAN" >/dev/null 2>&1
+                dpkg-deb -x "$archive_path" "$dest" >/dev/null 2>&1 ;;
             rpm)
                 if command -v rpm2cpio &>/dev/null && command -v cpio &>/dev/null; then
-                    ( cd "$dest" && rpm2cpio "$archive_path" | cpio -idm --quiet 2>/dev/null )
+                    ( cd "$dest" && rpm2cpio "$archive_path" | cpio -idm --quiet >/dev/null 2>&1 )
                 fi ;;
         esac
     else
@@ -485,7 +485,7 @@ __ARCHIVELIST__.extract_files(){
         case "$archive_type" in
             tar|tar.gz|tar.bz2|tar.xz)
                 local tmp=$(mktemp -d)
-                tar -xf "$archive_path" -C "$tmp" "${files[@]}" 2>/dev/null
+                tar -xf "$archive_path" -C "$tmp" "${files[@]}" >/dev/null 2>&1
                 for f in "${files[@]}"; do
                     local src="$tmp/${f#/}"
                     [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
@@ -493,7 +493,7 @@ __ARCHIVELIST__.extract_files(){
                 rm -rf "$tmp" ;;
             zip)
                 local tmp=$(mktemp -d)
-                unzip -q "$archive_path" "${files[@]}" -d "$tmp" 2>/dev/null
+                unzip -q "$archive_path" "${files[@]}" -d "$tmp" >/dev/null 2>&1
                 for f in "${files[@]}"; do
                     local src="$tmp/${f#/}"
                     [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
@@ -502,7 +502,7 @@ __ARCHIVELIST__.extract_files(){
             rar)
                 local tmp=$(mktemp -d)
                 for f in "${files[@]}"; do
-                    unrar x -y "$archive_path" "$f" "$tmp/" 2>/dev/null
+                    unrar x -y "$archive_path" "$f" "$tmp/" >/dev/null 2>&1
                     local src="$tmp/${f#/}"
                     [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
                 done
@@ -527,13 +527,13 @@ __ARCHIVELIST__.extract_files(){
                     if [[ "$f" == DEBIAN/* ]]; then
                         # Control file - extract from ctrl-tarfile
                         local ctrl_name="${f#DEBIAN/}"
-                        dpkg-deb --ctrl-tarfile "$archive_path" 2>/dev/null | \
-                            tar -xf - -C "$tmp" "./$ctrl_name" 2>/dev/null
+                        dpkg-deb --ctrl-tarfile "$archive_path" >/dev/null 2>&1 | \
+                            tar -xf - -C "$tmp" "./$ctrl_name" >/dev/null 2>&1
                         local src="$tmp/$ctrl_name"
                     else
                         # Data file - extract from fsys-tarfile
-                        dpkg-deb --fsys-tarfile "$archive_path" 2>/dev/null | \
-                            tar -xf - -C "$tmp" "./$f" 2>/dev/null
+                        dpkg-deb --fsys-tarfile "$archive_path" >/dev/null 2>&1 | \
+                            tar -xf - -C "$tmp" "./$f" >/dev/null 2>&1
                         local src="$tmp/$f"
                     fi
                     [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
@@ -542,7 +542,7 @@ __ARCHIVELIST__.extract_files(){
             rpm)
                 if command -v rpm2cpio &>/dev/null && command -v cpio &>/dev/null; then
                     local tmp=$(mktemp -d)
-                    ( cd "$tmp" && rpm2cpio "$archive_path" | cpio -idm --quiet 2>/dev/null )
+                    ( cd "$tmp" && rpm2cpio "$archive_path" | cpio -idm --quiet >/dev/null 2>&1 )
                     for f in "${files[@]}"; do
                         local src="$tmp/${f#/}"
                         [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
