@@ -853,9 +853,9 @@ view_file() {
         local tmp_dir=$(mktemp -d)
         local tmp_file="$tmp_dir/$arch_filename"
 
-        # Show extracting status
-        file_dialog.show_status "Extracting" "Extracting $arch_filename..." \
-            $($active_panel.x) $($active_panel.y) $($active_panel.width) $($active_panel.height)
+        # Show extracting status (cursor hidden, no output bleeds through)
+        tui.cursor.hide
+        _draw_status_dialog "Extract" "Extracting $arch_filename..."
 
         # Extract the single file
         $arch_list.extract_files "$tmp_dir" "$arch_path"
@@ -1279,7 +1279,7 @@ extract_item() {
     # Get the archivelist object from the active panel
     local arch_list=$($active_panel.list_source)
     local result
-    $arch_list.extract_files "$dest" "${files_to_extract[@]}"
+    _extract_with_progress "$arch_list" "$dest" "${files_to_extract[@]}"
     result=$?
 
     reload_other_panel
@@ -1288,6 +1288,244 @@ extract_item() {
     if [ $result -ne 0 ]; then
         show_error "Extraction failed"
     fi
+}
+
+# Extract files with progress dialog shown per file.
+# Args: arch_list dest files_to_extract...
+_extract_with_progress() {
+    local arch_list="$1"
+    local dest="$2"
+    shift 2
+    local files=("$@")
+    local total=${#files[@]}
+
+    tui.cursor.hide
+
+    if [ $total -eq 0 ]; then
+        # Extract all - no per-file progress, just status
+        _draw_status_dialog "Extract" "Extracting archive..."
+        $arch_list.extract_files "$dest"
+        tui.cursor.show
+        return $?
+    fi
+
+    local failed=0
+    local i
+    for ((i=0; i<total; i++)); do
+        local f="${files[$i]}"
+        local label="${f##*/}"
+        _draw_progress_dialog "Extract" "$label" \
+            "$i" "$total" \
+            "$i" "$total"
+        $arch_list.extract_files "$dest" "$f" || failed=1
+    done
+
+    # Draw 100%
+    _draw_progress_dialog "Extract" "Done" "$total" "$total" "$total" "$total"
+    tui.cursor.show
+    return $failed
+}
+
+
+
+# Draw a progress dialog.
+# Args: title file_label bytes_done bytes_total files_done files_total
+_draw_progress_dialog() {
+    local title="$1"
+    local file_label="$2"
+    local bytes_done="$3"
+    local bytes_total="$4"
+    local files_done="$5"
+    local files_total="$6"
+    tui.cursor.hide
+
+    local dialog_width=60
+    local dialog_height=10
+    local size=$(tui.screen.size)
+    local rows=${size% *}
+    local cols=${size#* }
+    local dialog_row=$(( (rows - dialog_height) / 2 ))
+    local dialog_col=$(( (cols - dialog_width) / 2 ))
+    local inner_width=$(( dialog_width - 4 ))
+
+    # Shadow
+    tui.color.bg_black
+    for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
+        tui.cursor.move $r $((dialog_col + 2))
+        printf "%$((dialog_width))s" ""
+    done
+
+    # Background
+    tui.color.bg_white
+    tui.color.black
+    for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
+        tui.cursor.move $r $dialog_col
+        printf "%${dialog_width}s" ""
+    done
+
+    # Border + title
+    tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
+    tui.cursor.move $dialog_row $((dialog_col + 2))
+    tui.color.bg_white; tui.color.black; tui.style.bold
+    printf " %s " "$title"
+    tui.style.reset
+
+    # File label (truncated)
+    tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
+    tui.color.bg_white; tui.color.black
+    local label_max=$inner_width
+    if [ ${#file_label} -gt $label_max ]; then
+        file_label="...${file_label: -$((label_max - 3))}"
+    fi
+    printf "%-${inner_width}s" "$file_label"
+
+    # Per-file progress bar
+    local bar_width=$inner_width
+    local file_pct=0
+    if [ "$bytes_total" -gt 0 ]; then
+        file_pct=$(( bytes_done * 100 / bytes_total ))
+    fi
+    local filled=$(( bar_width * file_pct / 100 ))
+    local empty=$(( bar_width - filled ))
+    tui.cursor.move $((dialog_row + 4)) $((dialog_col + 2))
+    tui.color.bg_cyan; tui.color.black
+    printf "%${filled}s" "" 2>/dev/null || true
+    tui.color.bg_blue; tui.color.white
+    printf "%${empty}s" "" 2>/dev/null || true
+    tui.color.bg_white; tui.color.black
+    tui.cursor.move $((dialog_row + 5)) $((dialog_col + 2))
+    printf "File: %d%%" "$file_pct"
+
+    # Overall progress bar
+    local overall_pct=0
+    if [ "$files_total" -gt 0 ]; then
+        overall_pct=$(( files_done * 100 / files_total ))
+    fi
+    filled=$(( bar_width * overall_pct / 100 ))
+    empty=$(( bar_width - filled ))
+    tui.cursor.move $((dialog_row + 7)) $((dialog_col + 2))
+    tui.color.bg_cyan; tui.color.black
+    printf "%${filled}s" "" 2>/dev/null || true
+    tui.color.bg_blue; tui.color.white
+    printf "%${empty}s" "" 2>/dev/null || true
+    tui.color.bg_white; tui.color.black
+    tui.cursor.move $((dialog_row + 8)) $((dialog_col + 2))
+    printf "Overall: %d%% (%d/%d files)" "$overall_pct" "$files_done" "$files_total"
+
+    tui.style.reset
+}
+
+# Show a simple status message dialog (no buttons).
+# Args: title message
+_draw_status_dialog() {
+    local title="$1"
+    local message="$2"
+    tui.cursor.hide
+    local dialog_width=50
+    local dialog_height=5
+    local size=$(tui.screen.size)
+    local rows=${size% *}; local cols=${size#* }
+    local dialog_row=$(( (rows - dialog_height) / 2 ))
+    local dialog_col=$(( (cols - dialog_width) / 2 ))
+
+    tui.color.bg_black
+    for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
+        tui.cursor.move $r $((dialog_col + 2)); printf "%$((dialog_width))s" ""
+    done
+    tui.color.bg_white; tui.color.black
+    for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
+        tui.cursor.move $r $dialog_col; printf "%${dialog_width}s" ""
+    done
+    tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
+    tui.cursor.move $dialog_row $((dialog_col + 2))
+    tui.style.bold; printf " %s " "$title"; tui.style.reset
+    tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
+    tui.color.bg_white; tui.color.black
+    printf "%-$((dialog_width - 4))s" "$message"
+    tui.style.reset
+}
+
+# Recursively collect all regular files under a path into __FILE_LIST array.
+# Also accumulates total size in __FILE_LIST_TOTAL_BYTES.
+# Args: base_source_path base_dest_path
+declare -ag __FILE_LIST_SRC=()
+declare -ag __FILE_LIST_DST=()
+declare -ag __FILE_LIST_SIZES=()
+__FILE_LIST_TOTAL_BYTES=0
+
+_build_file_list() {
+    local src="$1"
+    local dst="$2"
+
+    __FILE_LIST_SRC=()
+    __FILE_LIST_DST=()
+    __FILE_LIST_SIZES=()
+    __FILE_LIST_TOTAL_BYTES=0
+
+    _build_file_list_recurse "$src" "$dst"
+}
+
+_build_file_list_recurse() {
+    local src="$1"
+    local dst="$2"
+
+    if [ -d "$src" ]; then
+        # Recurse into directory
+        local entry
+        while IFS= read -r -d '' entry; do
+            local name="${entry##*/}"
+            _build_file_list_recurse "$entry" "$dst/$name"
+        done < <(find "$src" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
+    elif [ -f "$src" ]; then
+        local size
+        size=$(stat -c '%s' "$src" 2>/dev/null || echo 0)
+        __FILE_LIST_SRC+=("$src")
+        __FILE_LIST_DST+=("$dst")
+        __FILE_LIST_SIZES+=("$size")
+        __FILE_LIST_TOTAL_BYTES=$(( __FILE_LIST_TOTAL_BYTES + size ))
+    fi
+}
+
+# Copy a single file using dd, updating the progress dialog via stat polling.
+# Args: src dst file_size files_done files_total bytes_done_before title
+_copy_file_with_progress() {
+    local src="$1"
+    local dst="$2"
+    local file_size="$3"
+    local files_done="$4"
+    local files_total="$5"
+    local bytes_before="$6"
+    local title="$7"
+
+    # Ensure destination directory exists
+    local dst_dir="${dst%/*}"
+    mkdir -p "$dst_dir" 2>/dev/null
+
+    local file_label="${src##*/}"
+
+    # Run dd in background
+    dd if="$src" of="$dst" bs=65536 status=none 2>/dev/null &
+    local dd_pid=$!
+
+    # Poll destination file size until dd finishes
+    while kill -0 $dd_pid 2>/dev/null; do
+        local bytes_copied
+        bytes_copied=$(stat -c '%s' "$dst" 2>/dev/null || echo 0)
+        _draw_progress_dialog "$title" "$file_label" \
+            "$bytes_copied" "$file_size" \
+            "$files_done" "$files_total"
+        sleep 0.1
+    done
+
+    wait $dd_pid
+    local rc=$?
+
+    # Draw 100% for this file before moving on
+    _draw_progress_dialog "$title" "$file_label" \
+        "$file_size" "$file_size" \
+        "$((files_done + 1))" "$files_total"
+
+    return $rc
 }
 
 # Copy file/directory (F5)
@@ -1464,19 +1702,30 @@ copy_item() {
             return
         fi
         
-        # Copy each selected file to destination path
-        local failed=0
+        # Show "Preparing..." while building complete file list across all selected items
+        _draw_status_dialog "Copy" "Preparing..."
+        __FILE_LIST_SRC=()
+        __FILE_LIST_DST=()
+        __FILE_LIST_SIZES=()
+        __FILE_LIST_TOTAL_BYTES=0
         while IFS='|' read -r filename filetype; do
             local source="$source_path/$filename"
             local destination="$dest_path/$filename"
-            
-            if [ "$filetype" = "d" ]; then
-                cp -r "$source" "$destination" 2>/dev/null || failed=1
-            else
-                cp "$source" "$destination" 2>/dev/null || failed=1
-            fi
+            _build_file_list_recurse "$source" "$destination"
         done < <($active_list.get_selected)
+
+        # Copy all files with unified progress counters
+        local failed=0 i
+        for ((i=0; i<${#__FILE_LIST_SRC[@]}; i++)); do
+            _copy_file_with_progress \
+                "${__FILE_LIST_SRC[$i]}" \
+                "${__FILE_LIST_DST[$i]}" \
+                "${__FILE_LIST_SIZES[$i]}" \
+                "$i" "${#__FILE_LIST_SRC[@]}" \
+                "0" "Copy" || failed=1
+        done
         
+        tui.cursor.show
         if [ $failed -eq 1 ]; then
             show_error "Some files failed to copy"
         fi
@@ -1539,15 +1788,23 @@ copy_item() {
             fi
         fi
         
-        # Copy file or directory
-        local copy_cmd
-        if [ "$filetype" = "d" ]; then
-            copy_cmd="cp -r"
-        else
-            copy_cmd="cp"
-        fi
-        
-        if $copy_cmd "$source" "$destination" 2>/dev/null; then
+        # Copy with progress
+        _draw_status_dialog "Copy" "Preparing..."
+        _build_file_list "$source" "$destination"
+
+        local i bytes_done=0 failed=0
+        for ((i=0; i<${#__FILE_LIST_SRC[@]}; i++)); do
+            _copy_file_with_progress \
+                "${__FILE_LIST_SRC[$i]}" \
+                "${__FILE_LIST_DST[$i]}" \
+                "${__FILE_LIST_SIZES[$i]}" \
+                "$i" "${#__FILE_LIST_SRC[@]}" \
+                "$bytes_done" "Copy" || failed=1
+            bytes_done=$(( bytes_done + __FILE_LIST_SIZES[$i] ))
+        done
+
+        tui.cursor.show
+        if [ $failed -eq 0 ]; then
             # Success - reload both panels
             reload_both_panels
             
@@ -1737,14 +1994,47 @@ move_item() {
             return
         fi
         
-        # Move each selected file
+        # Try mv for all selected items first (instant on same filesystem).
+        # Collect any that fail (cross-filesystem) for dd+progress treatment.
         local failed=0
+        local -a _mv_src=() _mv_dst=()
         while IFS='|' read -r filename filetype; do
             local source="$source_path/$filename"
             local destination="$dest_path/$filename"
-            mv "$source" "$destination" 2>/dev/null || failed=1
+            if ! mv "$source" "$destination" 2>/dev/null; then
+                _mv_src+=("$source")
+                _mv_dst+=("$destination")
+            fi
         done < <($active_list.get_selected)
+
+        # Any cross-filesystem items: build full file list then copy+delete
+        if [ ${#_mv_src[@]} -gt 0 ]; then
+            _draw_status_dialog "Move" "Preparing..."
+            __FILE_LIST_SRC=()
+            __FILE_LIST_DST=()
+            __FILE_LIST_SIZES=()
+            __FILE_LIST_TOTAL_BYTES=0
+            local j
+            for ((j=0; j<${#_mv_src[@]}; j++)); do
+                _build_file_list_recurse "${_mv_src[$j]}" "${_mv_dst[$j]}"
+            done
+            local i
+            for ((i=0; i<${#__FILE_LIST_SRC[@]}; i++)); do
+                _copy_file_with_progress \
+                    "${__FILE_LIST_SRC[$i]}" \
+                    "${__FILE_LIST_DST[$i]}" \
+                    "${__FILE_LIST_SIZES[$i]}" \
+                    "$i" "${#__FILE_LIST_SRC[@]}" \
+                    "0" "Move" || { failed=1; break; }
+            done
+            if [ $failed -eq 0 ]; then
+                for ((j=0; j<${#_mv_src[@]}; j++)); do
+                    rm -rf "${_mv_src[$j]}" 2>/dev/null || failed=1
+                done
+            fi
+        fi
         
+        tui.cursor.show
         if [ $failed -eq 1 ]; then
             show_error "Some files failed to move"
         fi
@@ -1815,8 +2105,30 @@ move_item() {
                 return
             fi
         fi
-        
+
+        # Try mv first (instant on same filesystem)
+        local move_ok=0
         if mv "$source" "$destination" 2>/dev/null; then
+            move_ok=1
+        else
+            # Cross-filesystem: copy with progress then delete source
+            _draw_status_dialog "Move" "Preparing..."
+            _build_file_list "$source" "$destination"
+            local i bytes_done=0 failed=0
+            for ((i=0; i<${#__FILE_LIST_SRC[@]}; i++)); do
+                _copy_file_with_progress \
+                    "${__FILE_LIST_SRC[$i]}" \
+                    "${__FILE_LIST_DST[$i]}" \
+                    "${__FILE_LIST_SIZES[$i]}" \
+                    "$i" "${#__FILE_LIST_SRC[@]}" \
+                    "$bytes_done" "Move" || { failed=1; break; }
+                bytes_done=$(( bytes_done + __FILE_LIST_SIZES[$i] ))
+            done
+            [ $failed -eq 0 ] && rm -rf "$source" 2>/dev/null && move_ok=1
+        fi
+
+        tui.cursor.show
+        if [ $move_ok -eq 1 ]; then
             reload_both_panels
             
             local file_count=$($active_list.count)
