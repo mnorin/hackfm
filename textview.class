@@ -339,6 +339,6 @@ __TEXTVIEW__.render(){
         
         printf "%-${width}s" "$line"
         tui.color.reset
-        ((screen_row++))
+        screen_row=$(( screen_row + 1 ))
     done
 }
