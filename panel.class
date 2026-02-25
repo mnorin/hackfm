@@ -896,7 +896,6 @@ __PANEL__._enter_archive(){
 
     # Pre-render
     __PANEL__.prerender_all_rows || return 1
-    __PANEL__._publish_dir
 }
 
 # Exit archive view mode
@@ -934,7 +933,6 @@ __PANEL__._exit_archive(){
 
     # Pre-render
     __PANEL__.prerender_all_rows
-    __PANEL__._publish_dir
 }
 
 # Handle ENTER key - navigate into directory or set result for file opening
@@ -953,6 +951,7 @@ __PANEL__.enter(){
             # Exit archive mode
             __PANEL__._exit_archive
             __PANEL__.render
+            __PANEL__._publish_dir
             __PANEL__.enter_result = "ok"
             return
         fi
@@ -1005,7 +1004,6 @@ __PANEL__.enter(){
             local visible_rows=$((height - 3))
             $list.find_and_select "$current_dir" $visible_rows
             __PANEL__.prerender_all_rows
-            __PANEL__._publish_dir
         else
             local new_path
             if [ "$path" = "/" ]; then
@@ -1016,10 +1014,10 @@ __PANEL__.enter(){
             $list.path = "$new_path"
             cd "$new_path" 2>/dev/null || true
             __PANEL__.prerender_all_rows
-            __PANEL__._publish_dir
         fi
 
         __PANEL__.render
+        __PANEL__._publish_dir
         __PANEL__.enter_result = "ok"
     elif [ "$filetype" = "f" ] && [ "$list_type" = "filesystem" ]; then
         local filepath="$path/$filename"
@@ -1053,6 +1051,7 @@ __PANEL__.enter(){
                 # archive_path setter recognised the extension - enter archive mode
                 __PANEL__._enter_archive "$filename"
                 __PANEL__.render
+                __PANEL__._publish_dir
                 __PANEL__.enter_result = "ok"
             elif [ -x "$filepath" ]; then
                 # Executable file - run it
