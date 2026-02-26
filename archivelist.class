@@ -35,6 +35,7 @@ __ARCHIVELIST__.archive_path(){
             *.7z)             _detected="7z" ;;
             *.deb)            _detected="deb" ;;
             *.rpm)            _detected="rpm" ;;
+            *.iso)            _detected="iso" ;;
         esac
         __ARCHIVELIST__.property archive_type = "$_detected"
     else
@@ -165,9 +166,21 @@ __ARCHIVELIST__._load_full_archive(){
             done < <(unzip -l "$archive_path" 2>/dev/null)
             ;;
         rar)
+            # unrar l output: attr size date time name
+            # Unix attrs: first char 'd' = directory
+            # DOS attrs:  'D' anywhere in attr field = directory
             while IFS= read -r line; do
-                __ARCHIVELIST___all_entries+=("$line|")
-            done < <(unrar lb "$archive_path" 2>/dev/null)
+                local _attr _size _date _time _name
+                read -r _attr _size _date _time _name <<< "$line"
+                # Must have a valid numeric size and a name
+                [[ "$_size" =~ ^[0-9]+$ ]] || continue
+                [ -z "$_name" ] && continue
+                # Skip directories
+                [[ "$_attr" == d* ]] && continue
+                [[ "$_attr" == *D* ]] && continue
+                local size_str=$(__ARCHIVELIST__._format_size "$_size")
+                __ARCHIVELIST___all_entries+=("$_name|$size_str")
+            done < <(unrar l "$archive_path" 2>/dev/null)
             ;;
         7z)
             local cmd=""
@@ -276,6 +289,71 @@ __ARCHIVELIST__._load_full_archive(){
                     local size_str=$(__ARCHIVELIST__._format_size "$size")
                     __ARCHIVELIST___all_entries+=("$filename|$size_str")
                 done < <(rpm -qp --queryformat '[%{FILESIZES} %{FILENAMES}\n]' "$archive_path" 2>/dev/null)
+            fi
+            ;;
+        iso)
+            # Requires isoinfo from genisoimage package.
+            # Try Rock Ridge (-R) first for correct case, then Joliet (-J),
+            # then plain ISO 9660 as fallback.
+            if command -v isoinfo &>/dev/null; then
+                # Detect which extensions are available
+                local _ext_flag=""
+                if isoinfo -R -f -i "$archive_path" &>/dev/null 2>&1; then
+                    local _rr_test
+                    _rr_test=$(isoinfo -R -f -i "$archive_path" 2>/dev/null | head -1)
+                    # Rock Ridge names won't have ;1 suffix
+                    [[ "$_rr_test" != *";"* ]] && _ext_flag="-R"
+                fi
+                if [ -z "$_ext_flag" ]; then
+                    local _jr_test
+                    _jr_test=$(isoinfo -J -f -i "$archive_path" 2>/dev/null | head -1)
+                    [[ "$_jr_test" != *";"* ]] && _ext_flag="-J"
+                fi
+
+                # Build size map from -l output
+                # Format: perms links uid gid size month day year [ lba ] name
+                declare -A _iso_sizes=()
+                local _cur_dir=""
+                while IFS= read -r line; do
+                    if [[ "$line" =~ ^"Directory listing of "(.*) ]]; then
+                        _cur_dir="${BASH_REMATCH[1]%/}"
+                        continue
+                    fi
+                    [[ -z "$line" || "$line" =~ ^d ]] && continue
+                    local _size _name
+                    read -r _ _ _ _ _size _ _ _ _ _ _ _name <<< "$line"
+                    [[ "$_size" =~ ^[0-9]+$ ]] || continue
+                    [ -z "$_name" ] && continue
+                    _iso_sizes["${_cur_dir}/${_name}"]="$_size"
+                done < <(isoinfo $_ext_flag -l -i "$archive_path" 2>/dev/null)
+
+                # Build set of known directories from -l output (lines starting with d)
+                declare -A _iso_dirs=()
+                while IFS= read -r line; do
+                    if [[ "$line" =~ ^"Directory listing of "(.*) ]]; then
+                        local _dpath="${BASH_REMATCH[1]%/}"
+                        [ -n "$_dpath" ] && _iso_dirs["${_dpath#/}"]="1"
+                        continue
+                    fi
+                done < <(isoinfo $_ext_flag -l -i "$archive_path" 2>/dev/null)
+
+                # List all files - skip directory entries
+                while IFS= read -r filepath; do
+                    [ -z "$filepath" ] && continue
+                    # Without extensions, files have ;1 suffix - skip dirs (no ;1)
+                    if [ -z "$_ext_flag" ]; then
+                        [[ "$filepath" != *";"* ]] && continue
+                    fi
+                    # Strip version suffix and leading /
+                    local clean="${filepath%;*}"
+                    clean="${clean#/}"
+                    [ -z "$clean" ] && continue
+                    # Skip if this path is a known directory
+                    [ "${_iso_dirs[$clean]}" = "1" ] && continue
+                    local size="${_iso_sizes[$filepath]:-0}"
+                    local size_str=$(__ARCHIVELIST__._format_size "$size")
+                    __ARCHIVELIST___all_entries+=("$clean|$size_str")
+                done < <(isoinfo $_ext_flag -f -i "$archive_path" 2>/dev/null)
             fi
             ;;
     esac
@@ -479,6 +557,27 @@ __ARCHIVELIST__.extract_files(){
                 if command -v rpm2cpio &>/dev/null && command -v cpio &>/dev/null; then
                     ( cd "$dest" && rpm2cpio "$archive_path" | cpio -idm --quiet >/dev/null 2>&1 )
                 fi ;;
+            iso)
+                # Extract all using best available extension flag
+                if command -v isoinfo &>/dev/null; then
+                    local _ext=""
+                    local _t
+                    _t=$(isoinfo -R -f -i "$archive_path" 2>/dev/null | head -1)
+                    [[ "$_t" != *";"* && -n "$_t" ]] && _ext="-R"
+                    if [ -z "$_ext" ]; then
+                        _t=$(isoinfo -J -f -i "$archive_path" 2>/dev/null | head -1)
+                        [[ "$_t" != *";"* && -n "$_t" ]] && _ext="-J"
+                    fi
+                    while IFS= read -r fp; do
+                        [ -z "$fp" ] && continue
+                        # Without extensions, skip dirs (no ;1)
+                        [ -z "$_ext" ] && [[ "$fp" != *";"* ]] && continue
+                        local clean="${fp%;*}"
+                        local out_path="$dest/${clean#/}"
+                        mkdir -p "$(dirname "$out_path")" 2>/dev/null
+                        isoinfo $_ext -i "$archive_path" -x "$fp" >"$out_path" 2>/dev/null || true
+                    done < <(isoinfo $_ext -f -i "$archive_path" 2>/dev/null)
+                fi ;;
         esac
     else
         # Extract specific files
@@ -515,7 +614,7 @@ __ARCHIVELIST__.extract_files(){
                 if [ -n "$cmd" ]; then
                     local tmp=$(mktemp -d)
                     for f in "${files[@]}"; do
-                        $cmd x "$archive_path" -o"$tmp" -y "$f" 2>/dev/null
+                        $cmd x "$archive_path" -o"$tmp" -y "$f" >/dev/null 2>&1 || true
                         local src="$tmp/${f#/}"
                         [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
                     done
@@ -548,6 +647,27 @@ __ARCHIVELIST__.extract_files(){
                         [ -e "$src" ] && cp -r "$src" "$dest/" 2>/dev/null
                     done
                     rm -rf "$tmp"
+                fi ;;
+            iso)
+                # Extract specific files - try RR, Joliet, plain in order
+                if command -v isoinfo &>/dev/null; then
+                    local _ext=""
+                    local _t
+                    _t=$(isoinfo -R -f -i "$archive_path" 2>/dev/null | head -1)
+                    [[ "$_t" != *";"* && -n "$_t" ]] && _ext="-R"
+                    if [ -z "$_ext" ]; then
+                        _t=$(isoinfo -J -f -i "$archive_path" 2>/dev/null | head -1)
+                        [[ "$_t" != *";"* && -n "$_t" ]] && _ext="-J"
+                    fi
+                    for f in "${files[@]}"; do
+                        local out_path="$dest/$f"
+                        mkdir -p "$(dirname "$out_path")" 2>/dev/null
+                        if [ -n "$_ext" ]; then
+                            isoinfo $_ext -i "$archive_path" -x "/$f" >"$out_path" 2>/dev/null || true
+                        else
+                            { isoinfo -i "$archive_path" -x "/${f};1" >"$out_path" 2>/dev/null ||                               isoinfo -i "$archive_path" -x "/$f"      >"$out_path" 2>/dev/null; } || true
+                        fi
+                    done
                 fi ;;
         esac
     fi
