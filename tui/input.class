@@ -79,6 +79,19 @@ tui.input.key(){
                             7) echo "HOME" ;;
                             8) echo "END" ;;
                         esac
+                    elif [[ $key == ';' ]]; then
+                        # Modifier sequence: \e[1;5A = Ctrl+arrow etc.
+                        local mod
+                        IFS= read -rsn1 -t 0.05 mod
+                        IFS= read -rsn1 -t 0.05 key
+                        if [[ $mod == '5' ]]; then
+                            case "$key" in
+                                A) echo "CTRL-UP" ;;
+                                B) echo "CTRL-DOWN" ;;
+                                C) echo "CTRL-RIGHT" ;;
+                                D) echo "CTRL-LEFT" ;;
+                            esac
+                        fi
                     elif [[ $key == [0-9] ]]; then
                         # Function keys F1-F12
                         seq="$seq$key"

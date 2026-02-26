@@ -53,8 +53,6 @@ __VIEWER__._process_line(){
 
 __VIEWER__.load(){
     local filepath="$1"
-    local ext="${filepath##*.}"
-    ext="${ext,,}"
 
     __VIEWER__.filepath = "$filepath"
     __VIEWER___lines=()
@@ -63,47 +61,7 @@ __VIEWER__.load(){
     __VIEWER__.file_total = ""
     __VIEWER__.use_window = 0
 
-    # Check view.conf for a handler
-    local handler=""
-    local view_conf="$HACKFM_DIR/conf/view.conf"
-    if [ -f "$view_conf" ]; then
-        while IFS= read -r conf_line || [ -n "$conf_line" ]; do
-            [[ -z "$conf_line" || "$conf_line" == \#* ]] && continue
-            local conf_ext="${conf_line%% *}"
-            local conf_cmd="${conf_line#*[[:space:]]}"
-            while [[ "$conf_cmd" == [[:space:]]* ]]; do conf_cmd="${conf_cmd#?}"; done
-            if [ "${conf_ext,,}" = "$ext" ]; then
-                handler="$conf_cmd"
-                break
-            fi
-        done < "$view_conf"
-    fi
-
-    # Handler path - load fully (handlers are usually for small/transformed files)
-    local use_handler=0
-    if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
-        local cmd
-        export HACKFM_FILE="$filepath"
-        if [[ "$handler" == *%f* ]]; then
-            cmd="${handler//%f/\"\$HACKFM_FILE\"}"
-        else
-            cmd="$handler \"\$HACKFM_FILE\""
-        fi
-
-        while IFS= read -r line; do
-            local processed
-            processed=$(__VIEWER__._process_line "$line")
-            __VIEWER___lines+=("$processed")
-        done < <(eval "$cmd" 2>/dev/null)
-
-        [ ${#__VIEWER___lines[@]} -gt 0 ] && use_handler=1
-    fi
-
-    # Direct file read
-    if [ $use_handler -eq 0 ]; then
-        __VIEWER___lines=()
-
-        # Binary file check
+    # Binary file check
         if LC_ALL=C grep -qP '\x00' <(head -c 8192 "$filepath" 2>/dev/null) 2>/dev/null; then
             local size=$(stat -c '%s' "$filepath" 2>/dev/null || echo "unknown")
             local mime=$(file -b --mime-type "$filepath" 2>/dev/null || echo "unknown")
@@ -131,7 +89,6 @@ __VIEWER__.load(){
                 __VIEWER__._load_window 0
             fi
         fi
-    fi
 }
 
 # Load a window of lines starting at file line $1 (0-based)
@@ -173,6 +130,7 @@ __VIEWER__.display_content(){
     # Set blue background once for the entire content area
     tui.color.bg_blue
     tui.color.white
+    tui.cursor.move 2 1
 
     for ((i=scroll; i<scroll+max_rows && i<total_lines; i++)); do
         local arr_idx=$(( i - file_offset ))
@@ -283,13 +241,13 @@ __VIEWER__.show(){
     local scroll=$(__VIEWER__.scroll)
     local max_rows=$content_height
 
+    # Draw title before initial content display
+    local current_line=$((scroll + 1))
+    __VIEWER___appframe.title = " File: $filename | Line $current_line/$total_lines"
+    __VIEWER___appframe.draw_title
     __VIEWER__.display_content
 
     while true; do
-        local current_line=$((scroll + 1))
-        __VIEWER___appframe.title = " File: $filename | Line $current_line/$total_lines"
-        __VIEWER___appframe.draw_title
-
         local key=$(tui.input.key)
         local old_scroll=$scroll
 
@@ -378,6 +336,11 @@ __VIEWER__.show(){
                 # Page jump or window slide - full redraw
                 __VIEWER__.display_content
             fi
+
+            # Update title with new line number
+            current_line=$((scroll + 1))
+            __VIEWER___appframe.title = " File: $filename | Line $current_line/$total_lines"
+            __VIEWER___appframe.draw_title
         fi
     done
 

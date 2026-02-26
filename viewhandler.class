@@ -1,0 +1,84 @@
+# viewhandler.class - View dispatch layer for HackFM
+# Handles view.conf lookup, archive extraction, tmp file lifecycle.
+# Passes a clean filepath down to viewer.class for rendering.
+#
+# Usage:
+#   viewhandler.open filepath
+#   viewhandler.open_archive arch_list arch_path arch_filename
+
+__VIEWHANDLER__._lookup_conf() {
+    local filepath="$1"
+    local ext="${filepath##*.}"
+    ext="${ext,,}"
+    local view_conf="$HACKFM_DIR/conf/view.conf"
+    [ -f "$view_conf" ] || return
+    while IFS= read -r conf_line || [ -n "$conf_line" ]; do
+        [[ -z "$conf_line" || "$conf_line" == \#* ]] && continue
+        local conf_ext="${conf_line%% *}"
+        local conf_cmd="${conf_line#*[[:space:]]}"
+        while [[ "$conf_cmd" == [[:space:]]* ]]; do conf_cmd="${conf_cmd#?}"; done
+        if [ "${conf_ext,,}" = "$ext" ]; then
+            echo "$conf_cmd"
+            return
+        fi
+    done < "$view_conf"
+}
+
+__VIEWHANDLER__._run_handler() {
+    local handler="$1"
+    local filepath="$2"
+    local tmp_out="$3"
+    export HACKFM_FILE="$filepath"
+    local cmd
+    if [[ "$handler" == *%f* ]]; then
+        cmd="${handler//%f/\"\$HACKFM_FILE\"}"
+    else
+        cmd="$handler \"\$HACKFM_FILE\""
+    fi
+    eval "$cmd" > "$tmp_out" 2>/dev/null || true
+}
+
+viewhandler.open() {
+    local filepath="$1"
+
+    # Check view.conf for a handler
+    local handler
+    handler=$(__VIEWHANDLER__._lookup_conf "$filepath")
+
+    if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
+        # Run handler, capture output to tmp file so viewer can scroll freely
+        local tmp_out
+        tmp_out=$(mktemp)
+        __VIEWHANDLER__._run_handler "$handler" "$filepath" "$tmp_out"
+        if [ -s "$tmp_out" ]; then
+            file_viewer.open "$tmp_out" || true
+        else
+            # Handler produced no output - fall through to direct view
+            file_viewer.open "$filepath" || true
+        fi
+        rm -f "$tmp_out"
+    else
+        file_viewer.open "$filepath" || true
+    fi
+}
+
+viewhandler.open_archive() {
+    local arch_list="$1"
+    local arch_path="$2"
+    local arch_filename="$3"
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local tmp_file="$tmp_dir/$arch_filename"
+
+    tui.cursor.hide
+    _draw_status_dialog "Extract" "Extracting $arch_filename..."
+
+    $arch_list.extract_files "$tmp_dir" "$arch_path" || true
+
+    if [ -f "$tmp_file" ] && [ -r "$tmp_file" ]; then
+        viewhandler.open "$tmp_file"
+    fi
+
+    rm -rf "$tmp_dir"
+}

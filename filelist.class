@@ -274,31 +274,33 @@ __FILELIST__._build_sort_indices(){
             size_num="${BASH_REMATCH[1]}"
         fi
         
-        # Build sort keys: type|dot|sortfield<TAB>index
-        # For name: sort by name first, then length (so "file" comes before "file1")
-        local name_len=${#filename}
-        entries_name+=("${type_key}|${dot_key}|${filename}|$(printf '%04d' $name_len)"$'\t'"$i")
-        entries_date+=("${type_key}|${dot_key}|${filetime}|${filename}"$'\t'"$i")
-        entries_size+=("${type_key}|${dot_key}|$(printf '%020d' $size_num)|${filename}"$'\t'"$i")
-        entries_ext+=("${type_key}|${dot_key}|${ext}|${filename}"$'\t'"$i")
+        # Build sort keys: field<TAB>index
+        # Name sort: dot_key groups dotfiles/dotdirs at top of their group,
+        #            then sort by full filename (including dot) case-insensitively
+        local name_key="$filename"
+        entries_name+=("${type_key}|${dot_key}|${name_key}"$'\t'"$i")
+        # Date/size/ext: no dot_key - all entries sort together within dirs/files
+        entries_date+=("${type_key}|${filetime}|${filename}"$'\t'"$i")
+        entries_size+=("${type_key}|$(printf '%020d' $size_num)|${filename}"$'\t'"$i")
+        entries_ext+=("${type_key}|${ext}|${name_key}"$'\t'"$i")
     done
     
     # Sort and extract indices for ascending order
     while IFS=$'\t' read -r key idx; do
         __FILELIST___index_name_asc+=("$idx")
-    done < <(printf '%s\n' "${entries_name[@]}" | sort -t'|' -k1,1 -k2,2 -k3,3 -k4,4)
+    done < <(printf '%s\n' "${entries_name[@]}" | LC_ALL=C sort -t'|' -k1,1 -k2,2 -k3,3)
     
     while IFS=$'\t' read -r key idx; do
         __FILELIST___index_date_asc+=("$idx")
-    done < <(printf '%s\n' "${entries_date[@]}" | sort -t'|' -k1,1 -k2,2 -k3,3 -k4,4)
+    done < <(printf '%s\n' "${entries_date[@]}" | LC_ALL=C sort -t'|' -k1,1 -k2,2 -k3,3)
     
     while IFS=$'\t' read -r key idx; do
         __FILELIST___index_size_asc+=("$idx")
-    done < <(printf '%s\n' "${entries_size[@]}" | sort -t'|' -k1,1 -k2,2 -k3,3 -k4,4)
+    done < <(printf '%s\n' "${entries_size[@]}" | LC_ALL=C sort -t'|' -k1,1 -k2,2 -k3,3)
     
     while IFS=$'\t' read -r key idx; do
         __FILELIST___index_ext_asc+=("$idx")
-    done < <(printf '%s\n' "${entries_ext[@]}" | sort -t'|' -k1,1 -k2,2 -k3,3 -k4,4)
+    done < <(printf '%s\n' "${entries_ext[@]}" | LC_ALL=C sort -t'|' -k1,1 -k2,2 -k3,3)
     
     # Descending order is just reversed
     for ((i=${#__FILELIST___index_name_asc[@]}-1; i>=0; i--)); do
@@ -412,9 +414,11 @@ __FILELIST__.find_and_select(){
     
     local count=${#__FILELIST___files[@]}
     
-    # Search for the item
+    # Search by display index (respects current sort order)
     for ((i=0; i<count; i++)); do
-        if [ "${__FILELIST___files[$i]}" = "$target_name" ]; then
+        local entry=$(__FILELIST__.get $i)
+        local name="${entry%%|*}"
+        if [ "$name" = "$target_name" ]; then
             # Found it - select and adjust scroll
             __FILELIST__.selected = $i
             
