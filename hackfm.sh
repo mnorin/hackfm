@@ -857,11 +857,11 @@ view_file() {
         tui.cursor.hide
         _draw_status_dialog "Extract" "Extracting $arch_filename..."
 
-        # Extract the single file
-        $arch_list.extract_files "$tmp_dir" "$arch_path"
+        # Extract the single file - guard against ERR trap on failure
+        $arch_list.extract_files "$tmp_dir" "$arch_path" || true
 
         if [ -f "$tmp_file" ] && [ -r "$tmp_file" ]; then
-            file_viewer.open "$tmp_file"
+            file_viewer.open "$tmp_file" || true
         fi
 
         rm -rf "$tmp_dir"
@@ -883,7 +883,7 @@ view_file() {
         fi
 
         file_dialog.show_status "Opening" "Opening $filename for viewing..."
-        file_viewer.open "$filepath"
+        file_viewer.open "$filepath" || true
     fi
 
     # Return to file manager
@@ -905,8 +905,61 @@ edit_file() {
     fi
     
     local filepath="$path/$filename"
-    
-    # Use editor class
+    local ext="${filename##*.}"
+    ext="${ext,,}"
+
+    # Check edit.conf for an extension-specific editor
+    local handler=""
+    local edit_conf="$HACKFM_DIR/conf/edit.conf"
+    if [ -f "$edit_conf" ]; then
+        while IFS= read -r conf_line || [ -n "$conf_line" ]; do
+            [[ -z "$conf_line" || "$conf_line" == \#* ]] && continue
+            local conf_ext="${conf_line%% *}"
+            local conf_cmd="${conf_line#*[[:space:]]}"
+            while [[ "$conf_cmd" == [[:space:]]* ]]; do conf_cmd="${conf_cmd#?}"; done
+            if [ "${conf_ext,,}" = "$ext" ]; then
+                handler="$conf_cmd"
+                break
+            fi
+        done < "$edit_conf"
+    fi
+
+    # If no extension handler, check default_editor from hackfm.conf
+    if [ -z "$handler" ]; then
+        handler=$(conf_get default_editor "")
+    fi
+
+    # External editor path
+    if [ -n "$handler" ]; then
+        local editor_bin="${handler%% *}"
+        if ! command -v "$editor_bin" &>/dev/null; then
+            _draw_error_dialog "Editor not found" \
+                "Editor \"$editor_bin\" is not found." \
+                "Check conf/hackfm.conf or conf/edit.conf"
+            read -r -s -n1 -t10 < /dev/tty || true
+            draw_screen
+            return
+        fi
+        # Run external editor
+        tui.screen.main
+        tui.cursor.show
+        tui.cursor.style.default
+        stty sane
+        local cmd
+        export HACKFM_FILE="$filepath"
+        if [[ "$handler" == *%f* ]]; then
+            cmd="${handler//%f/\"\$HACKFM_FILE\"}"
+        else
+            cmd="$handler \"\$HACKFM_FILE\""
+        fi
+        eval "$cmd" < /dev/tty > /dev/tty 2>&1 || true
+        tui.screen.alt
+        reload_active_panel
+        draw_screen
+        return
+    fi
+
+    # Use internal editor
     file_editor.open "$filepath"
     
     # Reload directory (in case file was created/modified)
@@ -1443,6 +1496,52 @@ _draw_status_dialog() {
     tui.color.bg_white; tui.color.black
     printf "%-$((dialog_width - 4))s" "$message"
     tui.style.reset
+}
+
+# Draw a red error dialog with support for two lines of message
+_draw_error_dialog() {
+    local title="$1"
+    local line1="$2"
+    local line2="${3:-}"
+    tui.cursor.hide
+    local dialog_width=56
+    local dialog_height=$([ -n "$line2" ] && echo 7 || echo 5)
+    local size=$(tui.screen.size)
+    local rows=${size% *}; local cols=${size#* }
+    local dialog_row=$(( (rows - dialog_height) / 2 ))
+    local dialog_col=$(( (cols - dialog_width) / 2 ))
+    local inner_width=$(( dialog_width - 4 ))
+
+    # Shadow
+    tui.color.bg_black
+    for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
+        tui.cursor.move $r $((dialog_col + 2)); printf "%$((dialog_width))s" ""
+    done
+    # Red background
+    tui.color.bg_red; tui.color.bright_white
+    for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
+        tui.cursor.move $r $dialog_col; printf "%${dialog_width}s" ""
+    done
+    tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
+    # Title
+    tui.cursor.move $dialog_row $((dialog_col + 2))
+    tui.color.bg_red; tui.color.bright_white
+    tui.style.bold; printf " %s " "$title"; tui.style.reset
+    # Line 1
+    tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
+    tui.color.bg_red; tui.color.bright_white
+    printf "%-${inner_width}s" "$line1"
+    # Line 2
+    if [ -n "$line2" ]; then
+        tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2))
+        printf "%-${inner_width}s" "$line2"
+    fi
+    # Press any key hint
+    local hint="Press any key..."
+    local hint_row=$((dialog_row + dialog_height - 2))
+    tui.cursor.move $hint_row $((dialog_col + 2))
+    tui.style.bold; printf "%-${inner_width}s" "$hint"; tui.style.reset
+    tui.color.reset
 }
 
 # Recursively collect all regular files under a path into __FILE_LIST array.

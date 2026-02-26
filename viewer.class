@@ -83,10 +83,11 @@ __VIEWER__.load(){
     local use_handler=0
     if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
         local cmd
+        export HACKFM_FILE="$filepath"
         if [[ "$handler" == *%f* ]]; then
-            cmd="${handler//%f/\"$filepath\"}"
+            cmd="${handler//%f/\"\$HACKFM_FILE\"}"
         else
-            cmd="$handler \"$filepath\""
+            cmd="$handler \"\$HACKFM_FILE\""
         fi
 
         while IFS= read -r line; do
