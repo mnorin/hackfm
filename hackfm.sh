@@ -79,6 +79,7 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/edithandler.class"
 . "$HACKFM_DIR/dialogs.class"
 . "$HACKFM_DIR/fs.class"
+. "$HACKFM_DIR/usermenu.h"
 . "$HACKFM_DIR/commandline.h"
 . "$HACKFM_DIR/msgbroker.h"
 . "$HACKFM_DIR/menu.h"
@@ -278,6 +279,10 @@ init() {
     right_panel.message_broker = broker
     cmd.message_broker = broker
 
+    # Subscribe panels to dialog_closed for automatic repaint
+    broker.subscribe "dialog_closed" "left_panel.process_message"
+    broker.subscribe "dialog_closed" "right_panel.process_message"
+
     # Wire dialog to panels for status messages
     left_panel.dialog = file_dialog
     right_panel.dialog = file_dialog
@@ -322,7 +327,7 @@ draw_screen() {
     tui.cursor.hide
     
     # Draw frame (title + fkeys, no fill)
-    main_frame.draw_frame "Help" "" "View" "Edit" "Copy" "Move" "Mkdir" "Delete" "Menu" "Quit"
+    main_frame.draw_frame "Help" "UserMenu" "View" "Edit" "Copy" "Move" "Mkdir" "Delete" "Menu" "Quit"
     
     # Draw panels or output in main area
     if [ $PANELS_VISIBLE -eq 1 ]; then
@@ -663,7 +668,7 @@ view_file() {
         viewhandler.open "$filepath"
     fi
 
-    draw_screen
+    broker.publish "dialog_closed" ""
 }
 
 # Edit file (F4)
@@ -682,7 +687,7 @@ edit_file() {
     edithandler.open "$filepath"
 
     reload_active_panel
-    draw_screen
+    broker.publish "dialog_closed" ""
 }
 
 # Make directory (F7)
@@ -830,7 +835,8 @@ main_loop() {
             CTRL-R)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     reload_active_panel
-                    draw_screen
+                    local active_panel=$(get_active_panel)
+                    $active_panel.render
                 fi
                 ;;
 
@@ -914,6 +920,14 @@ RCFILE
                 ;;
                 
             # Function keys - only work in panel mode with empty command line
+            F2)
+                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
+                    local _um_filename _um_filetype _um_path
+                    IFS='|' read -r _um_filename _um_filetype _um_path <<< "$(get_selected_item)"
+                    usermenu.show "$_um_path/$_um_filename"
+                    broker.publish "dialog_closed" ""
+                fi
+                ;;
             F3)
                 if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
                     view_file
@@ -977,7 +991,7 @@ RCFILE
                     break
                 fi
                 # User cancelled - redraw and continue
-                draw_screen
+                broker.publish "dialog_closed" ""
                 ;;
             
             # Other keys - pass to command line or default handling

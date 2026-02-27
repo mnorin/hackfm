@@ -37,14 +37,14 @@ make_directory() {
             # Re-render row cache so highlight matches new cursor position
             $panel.prerender_all_rows
 
-            draw_screen
+            broker.publish "dialog_closed" ""
         else
             # Error
             show_error "Failed to create directory: $dirname"
         fi
     else
         # Cancelled
-        draw_screen
+        broker.publish "dialog_closed" ""
     fi
 }
 
@@ -81,7 +81,7 @@ delete_item() {
         dialog_cleanup
         
         if [ $confirm_result -ne 0 ]; then
-            draw_screen
+            broker.publish "dialog_closed" ""
             return
         fi
         
@@ -125,7 +125,7 @@ delete_item() {
             $active_list.scroll = $((new_index - max_visible + 1))
         fi
         
-        draw_screen
+        broker.publish "dialog_closed" ""
     else
         # No selection - delete cursor item (original behavior)
         local filename filetype
@@ -148,7 +148,7 @@ delete_item() {
         dialog_cleanup
         
         if [ $confirm_result -ne 0 ]; then
-            draw_screen
+            broker.publish "dialog_closed" ""
             return
         fi
         
@@ -170,7 +170,7 @@ delete_item() {
                         return
                     fi
                 else
-                    draw_screen
+                    broker.publish "dialog_closed" ""
                     return
                 fi
             fi
@@ -188,7 +188,7 @@ delete_item() {
             local active_panel=$(get_active_panel)
             $active_panel.reload
             
-            draw_screen
+            broker.publish "dialog_closed" ""
         fi
     fi
 }
@@ -322,7 +322,7 @@ extract_item() {
             ESC)
                 tui.cursor.hide
                 dialog_cleanup
-                draw_screen
+                broker.publish "dialog_closed" ""
                 return
                 ;;
             BACKSPACE)
@@ -356,7 +356,7 @@ extract_item() {
     # Do the extraction
     local dest="$input"
     if [ -z "$dest" ]; then
-        draw_screen
+        broker.publish "dialog_closed" ""
         return
     fi
 
@@ -367,7 +367,7 @@ extract_item() {
     result=$?
 
     reload_other_panel
-    draw_screen
+    broker.publish "dialog_closed" ""
 
     if [ $result -ne 0 ]; then
         show_error "Extraction failed"
@@ -666,9 +666,7 @@ copy_item() {
             esac
         done
         
-        # Clear dialog
-        tui.screen.alt
-        draw_screen
+        broker.publish "dialog_closed" ""
         
         if [ $confirm_result -ne 0 ]; then
             return
@@ -709,7 +707,7 @@ copy_item() {
         local panel_height=$($active_panel.height)
         $active_list.find_and_select "$filename_for_restore" $((panel_height - 3))
         
-        draw_screen
+        broker.publish "dialog_closed" ""
     else
         # No selection - copy cursor item (original behavior)
         local filename filetype
@@ -728,8 +726,7 @@ copy_item() {
         
         if ! show_path_input "Copy" "Copy to:" "$default_dest"; then
             # Cancelled
-            tui.screen.clear
-            draw_screen
+            broker.publish "dialog_closed" ""
             return
         fi
         
@@ -755,7 +752,7 @@ copy_item() {
             dialog_cleanup
             
             if [ $confirm_result -ne 0 ]; then
-                draw_screen
+                broker.publish "dialog_closed" ""
                 return
             fi
         fi
@@ -786,8 +783,7 @@ copy_item() {
             $active_list.find_and_select "$current_selection" $((panel_height - 3))
             $active_panel.prerender_all_rows
             
-            tui.screen.clear
-            draw_screen
+            broker.publish "dialog_closed" ""
         else
             show_error "Failed to copy"
         fi
@@ -958,9 +954,7 @@ move_item() {
             esac
         done
         
-        # Clear dialog
-        tui.screen.alt
-        draw_screen
+        broker.publish "dialog_closed" ""
         
         if [ $confirm_result -ne 0 ]; then
             return
@@ -1035,7 +1029,7 @@ move_item() {
             $active_list.scroll = $((new_index - max_visible + 1))
         fi
         
-        draw_screen
+        broker.publish "dialog_closed" ""
     else
         # No selection - move cursor item (original behavior)
         local filename filetype
@@ -1049,8 +1043,7 @@ move_item() {
         local default_dest="$dest_path/$filename"
         
         if ! show_path_input "Move/Rename" "Move to:" "$default_dest"; then
-            tui.screen.clear
-            draw_screen
+            broker.publish "dialog_closed" ""
             return
         fi
         
@@ -1073,7 +1066,7 @@ move_item() {
             dialog_cleanup
             
             if [ $confirm_result -ne 0 ]; then
-                draw_screen
+                broker.publish "dialog_closed" ""
                 return
             fi
         fi
@@ -1125,8 +1118,7 @@ move_item() {
             
             $active_panel.prerender_all_rows
             
-            tui.screen.clear
-            draw_screen
+            broker.publish "dialog_closed" ""
         else
             show_error "Failed to move"
         fi

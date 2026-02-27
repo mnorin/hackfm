@@ -300,6 +300,16 @@ __PANEL__._publish_cursor_moved(){
     "$broker.publish" "panel.cursor_moved" ""
 }
 
+# Handle incoming broker messages
+__PANEL__.process_message(){
+    local topic="$1"
+    case "$topic" in
+        dialog_closed)
+            __PANEL__.render
+            ;;
+    esac
+}
+
 
 
 # Draw info bar (filename or search field)
