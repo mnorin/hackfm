@@ -1,0 +1,217 @@
+#!/bin/bash
+# usermenu.class - User menu popup (F2)
+# Reads conf/usermenu.conf, shows a centered popup list, executes selected command.
+#
+# conf/usermenu.conf format (one entry per line):
+#   "Description" "command %f" [execution_mode]
+#
+# execution_mode (optional):
+#   (absent)       - run in terminal (like typing in command line)
+#   background     - run in background silently
+#   new-terminal   - open a new terminal window and run there
+
+# ---------------------------------------------------------------------------
+# Parse usermenu.conf
+# Fills three parallel arrays: labels, commands, modes
+# ---------------------------------------------------------------------------
+usermenu._load() {
+    __USERMENU___labels=()
+    __USERMENU___commands=()
+    __USERMENU___modes=()
+
+    local conf="$HACKFM_DIR/conf/usermenu.conf"
+    [ -f "$conf" ] || return 0
+
+    while IFS= read -r line; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+
+        # Parse: "label" "command" [mode]
+        # Use eval to handle quoted strings properly
+        local -a parts=()
+        eval "parts=($line)" 2>/dev/null || continue
+
+        [ ${#parts[@]} -lt 2 ] && continue
+
+        __USERMENU___labels+=("${parts[0]}")
+        __USERMENU___commands+=("${parts[1]}")
+        __USERMENU___modes+=("${parts[2]:-}")
+    done < "$conf"
+}
+
+# ---------------------------------------------------------------------------
+# Draw the popup
+# ---------------------------------------------------------------------------
+usermenu._draw() {
+    local selected="$1"
+    local count=${#__USERMENU___labels[@]}
+
+    local size
+    size=$(tui.screen.size)
+    local rows=${size% *}
+    local cols=${size#* }
+
+    # Calculate width: widest label + borders + padding
+    local max_label=0
+    for label in "${__USERMENU___labels[@]}"; do
+        [ ${#label} -gt $max_label ] && max_label=${#label}
+    done
+    local title="User Menu"
+    [ ${#title} -gt $max_label ] && max_label=${#title}
+
+    local popup_w=$((max_label + 6))   # 2 borders + 2 spaces padding + 2 extra
+    [ $popup_w -lt 24 ] && popup_w=24
+    local popup_h=$((count + 2))       # 2 borders + items
+
+    local popup_r=$(( (rows - popup_h) / 2 ))
+    local popup_c=$(( (cols - popup_w) / 2 ))
+    [ $popup_r -lt 2 ] && popup_r=2
+
+    # Shadow
+    tui.color.bg_black
+    for ((r=popup_r+1; r<=popup_r+popup_h; r++)); do
+        tui.cursor.move $r $((popup_c + 2))
+        printf "%${popup_w}s" ""
+    done
+    tui.color.reset
+
+    # Background fill
+    tui.color.bg_white
+    tui.color.black
+    for ((r=popup_r; r<popup_r+popup_h; r++)); do
+        tui.cursor.move $r $popup_c
+        printf "%${popup_w}s" ""
+    done
+
+    # Border with title embedded in top line
+    tui.color.bg_white
+    tui.color.black
+    tui.box.titled $popup_r $popup_c $popup_w $popup_h "$title"
+
+    # Items
+    local inner_w=$((popup_w - 4))   # width available for label text
+    for ((i=0; i<count; i++)); do
+        local row=$((popup_r + 1 + i))
+        tui.cursor.move $row $popup_c
+        tui.color.bg_white
+        tui.color.black
+        printf "│"
+
+        if [ $i -eq $selected ]; then
+            tui.color.bg_cyan
+            tui.color.black
+        else
+            tui.color.bg_white
+            tui.color.black
+        fi
+
+        printf " %-${inner_w}s " "${__USERMENU___labels[$i]:0:$inner_w}"
+
+        tui.color.bg_white
+        tui.color.black
+        printf "│"
+    done
+
+    tui.color.reset
+    tui.cursor.hide
+}
+
+# ---------------------------------------------------------------------------
+# Execute selected entry, substituting %f with current file
+# ---------------------------------------------------------------------------
+usermenu._execute() {
+    local idx="$1"
+    local current_file="$2"
+
+    local cmd="${__USERMENU___commands[$idx]}"
+    local mode="${__USERMENU___modes[$idx]}"
+
+    # Substitute %f with the current file (properly quoted)
+    local quoted_file
+    printf -v quoted_file '%q' "$current_file"
+    cmd="${cmd//%f/$quoted_file}"
+
+    case "$mode" in
+        background)
+            eval "$cmd" &>/dev/null &
+            ;;
+        new-terminal)
+            # Try common terminal emulators
+            if command -v xterm &>/dev/null; then
+                xterm -e bash -c "$cmd; read -p 'Press Enter to close...'" &
+            elif command -v gnome-terminal &>/dev/null; then
+                gnome-terminal -- bash -c "$cmd; read -p 'Press Enter to close...'" &
+            elif command -v konsole &>/dev/null; then
+                konsole -e bash -c "$cmd; read -p 'Press Enter to close...'" &
+            elif command -v xfce4-terminal &>/dev/null; then
+                xfce4-terminal -e "bash -c \"$cmd; read -p 'Press Enter to close...'\"" &
+            else
+                # Fallback: run in background with no terminal
+                eval "$cmd" &>/dev/null &
+            fi
+            ;;
+        *)
+            # Run in terminal (default) - same as execute_command in hackfm
+            usermenu._run_in_terminal "$cmd"
+            ;;
+    esac
+}
+
+# Run command in the current terminal, restoring hackfm afterwards
+usermenu._run_in_terminal() {
+    local cmd="$1"
+    tui.screen.clear
+    tui.cursor.show
+    tui.color.reset
+    tui.region.reset
+    tui.screen.wrap_on
+    echo ""
+    eval "$cmd"
+    local exit_code=$?
+    echo ""
+    echo "--- Press any key to return to hackfm ---"
+    tui.input.key &>/dev/null
+    tui.cursor.hide
+}
+
+# ---------------------------------------------------------------------------
+# Main: show popup, handle input, return
+# ---------------------------------------------------------------------------
+usermenu.show() {
+    local current_file="${1:-}"
+
+    usermenu._load
+
+    local count=${#__USERMENU___labels[@]}
+
+    if [ $count -eq 0 ]; then
+        _draw_error_dialog "User Menu" "No entries found in usermenu.conf"
+        return
+    fi
+
+    local selected=0
+    usermenu._draw $selected
+
+    while true; do
+        local key
+        key=$(tui.input.key 2>&1) || continue
+
+        case "$key" in
+            UP)
+                [ $selected -gt 0 ] && selected=$((selected - 1))
+                usermenu._draw $selected
+                ;;
+            DOWN)
+                [ $selected -lt $((count - 1)) ] && selected=$((selected + 1))
+                usermenu._draw $selected
+                ;;
+            ENTER)
+                usermenu._execute $selected "$current_file"
+                return
+                ;;
+            ESC)
+                return
+                ;;
+        esac
+    done
+}
