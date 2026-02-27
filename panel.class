@@ -290,16 +290,6 @@ __PANEL__._publish_dir(){
     "$broker.publish" "panel.active.dir_changed" "$path"
 }
 
-# Publish cursor moved (only when active and broker is set)
-__PANEL__._publish_cursor_moved(){
-    local active=$(__PANEL__.active)
-    [ "$active" != "1" ] && return
-    local broker=$(__PANEL__.message_broker)
-    [ -z "$broker" ] && return
-    declare -F "$broker.publish" &>/dev/null || return
-    "$broker.publish" "panel.cursor_moved" ""
-}
-
 # Handle incoming broker messages
 __PANEL__.process_message(){
     local topic="$1"
@@ -822,8 +812,6 @@ __PANEL__.navigate(){
 
         __PANEL__.draw_info_bar
     fi
-
-    __PANEL__._publish_cursor_moved
 }
 
 # Get selected item info

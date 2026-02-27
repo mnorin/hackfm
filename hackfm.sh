@@ -1012,6 +1012,23 @@ RCFILE
                 fi
                 ;;
         esac
+
+        # Always return terminal cursor to command line input position
+        local _cmd_row=$(cmd.row)
+        local _cmd_col=$(cmd.col)
+        local _cmd_prompt=$(cmd.prompt)
+        local _cmd_text=$(cmd.text)
+        local _cmd_cursor=$(cmd.cursor_pos)
+        local _cmd_width=$(cmd.width)
+        local _prompt_len=${#_cmd_prompt}
+        local _text_width=$((_cmd_width - _prompt_len))
+        local _display_cursor=$_cmd_cursor
+        if [ ${#_cmd_text} -gt $_text_width ] && [ $_cmd_cursor -ge $_text_width ]; then
+            _display_cursor=$((_text_width - 1))
+        fi
+        tui.cursor.move $_cmd_row $((_cmd_col + _prompt_len + _display_cursor))
+        tui.cursor.style.blinking_underline
+        tui.cursor.show
     done
 }
 
