@@ -3,154 +3,206 @@ Hackable File Manager
 
 A TUI file manager written in bash. Extend it if you know bash.
 
-Uses [ba.sh](https://github.com/mnorin/ba.sh) for code organisation and a ba.sh based TUI library for text graphics. Doesn't use ncurses — the idea is to use bash as much as possible in favor of external tools.
+Uses [ba.sh](https://github.com/mnorin/ba.sh) for code organisation and a ba.sh-based TUI library for text graphics. Doesn't use ncurses — the idea is to use bash as much as possible and minimise external tool dependencies.
 
-This is an experimental tool, so be careful when using it.
+This is an experimental tool. Be careful when using it, especially with file operations.
+
+---
 
 ## Dependencies
 
-### Required
+Required:
+- bash
+- awk
+- find
+- stat
 
-- **bash** (4.0+) — requires associative arrays (`declare -A`) and `${var^^}` case conversion. macOS ships with bash 3.2 by default; install a newer version via Homebrew (`brew install bash`) if needed.
-- **tar** — for tar-based archive browsing and extraction
-- **unzip** — for zip archive support
-- **unrar** — for rar archive support
-- **7z** / **7za** / **7zr** — for 7z archive support (any one of these)
+Optional (for archive support):
+- tar
+- unzip
+- unrar
+- 7z / 7za / 7zr
+- isoinfo (from genisoimage, for ISO 9660 images)
 
-### Standard utilities (expected to be present on any Linux system)
+Optional (for view.conf handlers):
+- Various tools depending on what you configure (pdftotext, ffprobe, identify, etc.)
 
-These are used internally and are part of GNU coreutils or util-linux:
-
-`awk`, `sed`, `grep`, `cut`, `sort`, `wc`, `tr`, `stat`, `file`, `find`, `head`, `tail`, `cat`, `cp`, `mv`, `rm`, `mkdir`, `stty`, `tput`, `hostname`
+---
 
 ## Features
 
-### File Manager
+### File Management
+- Two-panel layout
+- Navigate the filesystem in both panels independently
+- Copy, move, delete files and directories (with progress dialogs for large operations)
+- Create directories (F7)
+- Multiple file selection with Insert key
+- Tab to switch between panels
 
-Two-panel layout inspired by Midnight Commander. Each panel shows the contents of a directory with file names, sizes, modification dates, and permissions.
+### Sorting
+- Sort by name, date, size, or extension (via Left/Right menus)
+- Ascending and descending order
+- Directories always shown before files
+- When sorting by name: dot directories on top, dot files on top, capitals before lowercase (MC style)
+- When sorting by size or date: all entries sorted together within dirs/files groups
 
-- Navigate the file system with arrow keys, Page Up/Down, Home, End
-- Switch between panels with Tab
-- Execute shell commands directly from the command line at the bottom
-- Command history navigation with Up/Down arrows when command line is active
-- Quick search within the current panel (Ctrl+S)
-- Toggle between file manager and an interactive terminal session (Ctrl+O)
-- Reload the active panel (Ctrl+R)
-
-### File Operations
-
-- **View** — open file in the built-in viewer (F3)
-- **Edit** — open file in the built-in editor (F4)
-- **Copy** — copy file or directory to the other panel (F5)
-- **Move/Rename** — move or rename file or directory (F6)
-- **Make directory** — create a new directory (F7)
-- **Delete** — delete file or directory with confirmation (F8)
-- **Multi-select** — mark/unmark files with Insert key, then apply operations to all marked files
-
-### Archive Support
-
-Browse inside archives as if they were directories. Supported formats:
-
-- tar, tar.gz / tgz, tar.bz2 / tbz2, tar.xz / txz
+### Archives
+Browse archives as if they were directories. Supported formats:
+- tar, tar.gz, tar.bz2, tar.xz
 - zip
-- rar
-- 7z
+- rar (requires unrar)
+- 7z (requires 7z/7za/7zr)
+- ISO 9660 images (requires isoinfo), with Rock Ridge and Joliet extension support
 
-Press Enter on an archive to navigate inside it. Press F5 inside an archive to extract the selected file.
+Press Enter to navigate into and out of archives. F5 to extract files.
 
 ### File Viewer (F3)
+- Built-in text viewer with scrolling (PgUp/PgDn, Home/End)
+- Windowed loading for large files
+- View files inside archives without extracting manually
+- Configurable external handlers per extension via `conf/view.conf`
+  - Falls back to built-in viewer if handler not found or produces no output
+  - Binary files show type and size information
 
-- Scroll with arrow keys, Page Up/Down, Home, End
-- Syntax-aware viewing via conf/view.conf — map file extensions to external conversion commands (e.g. render markdown, highlight source code)
-- Exit with F3, F10
-
-### Text Editor (F4)
-
-- Full cursor navigation: arrow keys, Page Up/Down, Home, End
-- Text selection with F3 (toggle selection mode)
-- Copy selection (F5)
-- Move/cut-paste selection (F6)
-- Delete current line (F8)
-- Save (F2)
-- Exit with F10 (prompts to save if there are unsaved changes)
-- ESC clears the current selection
-
-> **Note:** The editor saves changes when you exit via F10 and confirm. Be careful — it modifies files directly.
+### File Editor (F4)
+- Built-in text editor
+- Configurable external editor per extension via `conf/edit.conf`
+- Global default external editor via `default_editor` in `conf/hackfm.conf`
+- Priority: edit.conf handler → default_editor → internal editor
+- Shows error dialog if configured editor is not found
 
 ### Command Line
+- Integrated command line at the bottom of the screen
+- Commands run in the current directory of the active panel
+- Ctrl+O toggles between file manager and full-screen terminal buffer
+- Ctrl+Up / Ctrl+Down scroll through command history
+- Ctrl+/ inserts the path of the selected file into the command line
+- Ctrl+R reloads the active panel
+- Ctrl+U clears the command line
 
-The command line at the bottom of the screen runs shell commands in the current panel's directory.
+---
 
-- Type a command and press Enter to execute
-- **Ctrl+/** — insert the filename under the cursor at the current command line position (useful for building commands like `./script arg1 arg2`)
-- **Ctrl+U** — clear the command line
-- **Up/Down arrows** — navigate command history (when command line is active)
-
-### Configuration
-
-#### conf/ext.conf
-Maps file extensions to programs to open them with when pressing Enter. Each line: `extension command`.
-
-#### conf/view.conf
-Maps file extensions to commands for the built-in viewer. Each line: `extension command`. Use `%f` as a placeholder for the file path, or omit it to have the path appended automatically.
-
-## Keyboard Reference
-
-### File Manager
+## Key Bindings
 
 | Key | Action |
 |-----|--------|
-| Arrow keys | Navigate files |
-| Page Up / Page Down | Scroll page |
-| Home / End | Jump to first / last file |
-| Enter | Open file or enter directory / execute command |
 | Tab | Switch active panel |
+| Enter | Open file / enter directory or archive |
 | Insert | Toggle file selection |
-| Backspace | Go to parent directory |
 | F3 | View file |
 | F4 | Edit file |
-| F5 | Copy file (or extract from archive) |
-| F6 | Move / rename file |
-| F7 | Create directory |
-| F8 | Delete file or directory |
-| F9 | Open menu |
+| F5 | Copy / Extract from archive |
+| F6 | Move / Rename |
+| F7 | Make directory |
+| F8 | Delete |
+| F9 | Menu bar |
 | F10 | Quit |
-| Ctrl+/ | Insert filename under cursor into command line |
-| Ctrl+U | Clear command line |
+| Ctrl+O | Toggle terminal buffer |
+| Ctrl+Up | Previous command in history |
+| Ctrl+Down | Next command in history |
+| Ctrl+/ | Insert selected file path into command line |
 | Ctrl+R | Reload active panel |
-| Ctrl+S | Quick search in current panel (if you terminal intercepts it, press Ctrl-O twice and try again) |
-| Ctrl+O | Toggle terminal session |
-| ESC | Clear command line |
+| Ctrl+U | Clear command line |
+| Ctrl+S | Sort menu |
 
-### File Viewer
+---
 
-| Key | Action |
-|-----|--------|
-| Up / Down | Scroll one line |
-| Page Up / Page Down | Scroll one page |
-| Home / End | Jump to start / end |
-| F3 / F10 | Exit viewer |
+## Configuration
 
-### Text Editor
+All configuration lives in the `conf/` directory.
 
-| Key | Action |
-|-----|--------|
-| Arrow keys | Move cursor |
-| Page Up / Page Down | Scroll page |
-| Home / End | Jump to line start / end |
-| F2 | Save |
-| F3 | Toggle selection |
-| F5 | Copy selection |
-| F6 | Move (cut + paste) selection |
-| F8 | Delete current line |
-| F10 | Exit (prompts to save if modified) |
-| ESC | Clear selection |
+### conf/hackfm.conf
+Main configuration file.
 
-## TODO
+```
+# Open executables in a new terminal window (1) or inline (0)
+open_execute_in_terminal=0
 
-- Extracting files from archives (needs improving)
-- User menu (F2)
-- Multiple functional key layers
-- Centralized configuration (in progress)
-- Massive refactoring of the main script
-- Performance improvements (still things to be improved)
+# Default external editor (leave empty to use internal editor)
+default_editor=
+```
+
+### conf/view.conf
+Maps file extensions to viewer commands. Use `%f` as a placeholder for the filepath.
+
+```
+pdf     pdftotext -layout %f -
+json    python3 -m json.tool %f
+iso     isoinfo -d -i %f
+```
+
+If the command is not found or produces no output, the built-in viewer is used as fallback.
+
+### conf/edit.conf
+Maps file extensions to editor commands. Use `%f` as a placeholder for the filepath.
+
+```
+py      nano
+sh      vi
+```
+
+Falls back to `default_editor` from `hackfm.conf`, then to the internal editor.
+
+### conf/ext.conf
+Maps file extensions to open actions (executed when pressing Enter on a file).
+
+---
+
+## Architecture
+
+hackfm is built from small, single-responsibility bash classes using the [ba.sh](https://github.com/mnorin/ba.sh) OOP framework.
+
+### Application
+- `hackfm.sh` — main orchestrator: init, main loop, key dispatch
+- `appframe.class` — overall screen layout
+
+### Panels & Files
+- `panel.class` — individual panel (wraps filelist, handles rendering and input)
+- `filelist.class` — directory listing, sorting, selection
+- `archivelist.class` — archive contents listing and extraction
+- `statusbar.class` — panel status bar
+
+### Operations
+- `fs.class` — file operations: copy, move, delete, mkdir, extract
+- `viewhandler.class` — view dispatch: reads view.conf, handles archive extraction, delegates to viewer
+- `edithandler.class` — edit dispatch: reads edit.conf, handles external editors, delegates to editor
+- `dialogs.class` — modal dialog overlays (status, error, progress, input)
+
+### UI Components
+- `viewer.class` — text file viewer engine
+- `editor.class` — text file editor engine
+- `commandline.class` — command line input and history
+- `menu.class` / `menubar.class` — menu system
+- `fkeybar.class` — F-key bar at bottom
+- `dialog.class` — input/confirm/message dialog widget
+- `msgbroker.class` — message broker for inter-component communication
+
+### TUI Library (`tui/`)
+- `cursor.class` — cursor positioning and visibility
+- `color.class` — terminal colors
+- `screen.class` — screen switching (main/alt), size
+- `box.class` — box drawing
+- `input.class` — keyboard input and key sequence parsing
+- `style.class` — bold, underline, etc.
+- `region.class` — scrollable screen regions
+- `mouse.class` — mouse event handling
+
+---
+
+## Extending hackfm
+
+Since everything is bash, you can:
+
+- Add viewer handlers in `conf/view.conf` for any file type
+- Add editor handlers in `conf/edit.conf` for any file type
+- Add open actions in `conf/ext.conf` for any file type
+- Edit any `.class` file to change behaviour
+- Add new `.class` files and source them in `hackfm.sh`
+
+The ba.sh framework lets you define classes with properties and methods using dot notation:
+
+```bash
+myobject.method arg1 arg2
+myobject.property = "value"
+local val=$(myobject.property)
+```
