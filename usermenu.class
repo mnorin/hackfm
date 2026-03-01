@@ -15,6 +15,7 @@
 # Fills three parallel arrays: labels, commands, modes
 # ---------------------------------------------------------------------------
 usermenu._load() {
+    __USERMENU___hotkeys=()
     __USERMENU___labels=()
     __USERMENU___commands=()
     __USERMENU___modes=()
@@ -31,11 +32,12 @@ usermenu._load() {
         local -a parts=()
         eval "parts=($line)" 2>/dev/null || continue
 
-        [ ${#parts[@]} -lt 2 ] && continue
+        [ ${#parts[@]} -lt 3 ] && continue
 
-        __USERMENU___labels+=("${parts[0]}")
-        __USERMENU___commands+=("${parts[1]}")
-        __USERMENU___modes+=("${parts[2]:-}")
+        __USERMENU___hotkeys+=("${parts[0]}")
+        __USERMENU___labels+=("${parts[1]}")
+        __USERMENU___commands+=("${parts[2]}")
+        __USERMENU___modes+=("${parts[3]:-}")
     done < "$conf"
 }
 
@@ -53,8 +55,9 @@ usermenu._draw() {
 
     # Calculate width: widest label + borders + padding
     local max_label=0
-    for label in "${__USERMENU___labels[@]}"; do
-        [ ${#label} -gt $max_label ] && max_label=${#label}
+    for i in "${!__USERMENU___labels[@]}"; do
+        local item_len=$(( ${#__USERMENU___hotkeys[$i]} + 1 + ${#__USERMENU___labels[$i]} ))
+        [ $item_len -gt $max_label ] && max_label=$item_len
     done
     local title="User Menu"
     [ ${#title} -gt $max_label ] && max_label=${#title}
@@ -105,7 +108,10 @@ usermenu._draw() {
             tui.color.black
         fi
 
-        printf " %-${inner_w}s " "${__USERMENU___labels[$i]:0:$inner_w}"
+        local hotkey="${__USERMENU___hotkeys[$i]}"
+        local label="${__USERMENU___labels[$i]}"
+        local item_text="${hotkey} ${label}"
+        printf " %-${inner_w}s " "${item_text:0:$inner_w}"
 
         tui.color.bg_white
         tui.color.black
@@ -211,6 +217,15 @@ usermenu.show() {
                 ;;
             ESC)
                 return
+                ;;
+            *)
+                # Check if key matches a hotkey
+                for i in "${!__USERMENU___hotkeys[@]}"; do
+                    if [ "${__USERMENU___hotkeys[$i]}" = "$key" ]; then
+                        usermenu._execute $i "$current_file"
+                        return
+                    fi
+                done
                 ;;
         esac
     done
