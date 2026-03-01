@@ -42,13 +42,24 @@ resize_handler() {
     
     # Update left panel
     left_panel.x = 1
+    left_panel.y = 3
     left_panel.width = $panel_width
     left_panel.height = $panel_height
-    
+
     # Update right panel
     right_panel.x = $((panel_width + 3))
-    right_panel.width = $panel_width
+    right_panel.y = 3
+    right_panel.width = $((cols - panel_width - 4))
     right_panel.height = $panel_height
+
+    # Update command line geometry
+    cmd.row = $((rows - 1))
+    cmd.col = 1
+    cmd.width = $cols
+
+    # Rebuild row cache for new dimensions
+    left_panel.prerender_all_rows
+    right_panel.prerender_all_rows
     
     # Redraw everything
     draw_screen
