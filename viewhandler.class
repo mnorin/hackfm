@@ -46,19 +46,17 @@ viewhandler.open() {
     handler=$(__VIEWHANDLER__._lookup_conf "$filepath")
 
     if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
-        # Run handler, capture output to tmp file so viewer can scroll freely
         local tmp_out
         tmp_out=$(mktemp)
         __VIEWHANDLER__._run_handler "$handler" "$filepath" "$tmp_out"
         if [ -s "$tmp_out" ]; then
-            file_viewer.open "$tmp_out" || true
+            "$HACKFM_DIR/viewer.sh" "$tmp_out" || true
         else
-            # Handler produced no output - fall through to direct view
-            file_viewer.open "$filepath" || true
+            "$HACKFM_DIR/viewer.sh" "$filepath" || true
         fi
         rm -f "$tmp_out"
     else
-        file_viewer.open "$filepath" || true
+        "$HACKFM_DIR/viewer.sh" "$filepath" || true
     fi
 }
 

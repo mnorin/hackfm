@@ -84,7 +84,6 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/filelist.h"
 . "$HACKFM_DIR/archivelist.h"
 . "$HACKFM_DIR/panel.h"
-. "$HACKFM_DIR/viewer.h"
 . "$HACKFM_DIR/editor.h"
 . "$HACKFM_DIR/viewhandler.class"
 . "$HACKFM_DIR/edithandler.class"
@@ -257,9 +256,6 @@ init() {
     # Set active AFTER filelist is created
     right_panel.active = 0
     
-    # Create file viewer
-    viewer file_viewer
-    
     # Create file editor
     editor file_editor
     
@@ -290,9 +286,16 @@ init() {
     right_panel.message_broker = broker
     cmd.message_broker = broker
 
-    # Subscribe panels to dialog_closed for automatic repaint
+    # Subscribe panels and command line to dialog_closed for automatic repaint
     broker.subscribe "dialog_closed" "left_panel.process_message"
     broker.subscribe "dialog_closed" "right_panel.process_message"
+    broker.subscribe "dialog_closed" "draw_command_line"
+
+    # Subscribe full redraw components to viewer_closed
+    broker.subscribe "viewer_closed" "left_panel.process_message"
+    broker.subscribe "viewer_closed" "right_panel.process_message"
+    broker.subscribe "viewer_closed" "draw_command_line"
+    broker.subscribe "viewer_closed" "draw_main_frame"
 
     # Wire dialog to panels for status messages
     left_panel.dialog = file_dialog
@@ -330,6 +333,11 @@ redraw_panels_for_dropdown() {
 }
 
 # Draw screen
+draw_main_frame() {
+    main_frame.draw_title
+    main_frame.draw_fkeys "Help" "UserMenu" "View" "Edit" "Copy" "Move" "Mkdir" "Delete" "Menu" "Quit"
+}
+
 draw_screen() {
     # Ensure we're on alternate screen
     tui.screen.alt
@@ -679,10 +687,8 @@ view_file() {
         viewhandler.open "$filepath"
     fi
 
-    broker.publish "dialog_closed" ""
+    broker.publish "viewer_closed" ""
 }
-
-# Edit file (F4)
 edit_file() {
     tui.color.reset
 
