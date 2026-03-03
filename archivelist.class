@@ -100,6 +100,18 @@ declare -ag __ARCHIVELIST___full_paths=()
 declare -ag __ARCHIVELIST___marked=()   # 1 = marked for operation, 0 = not marked
 
 # Format a byte count the same way filelist does
+# Detect ISO extension flag for isoinfo
+# Returns -R if Rock Ridge is present, "" otherwise
+# Joliet is intentionally ignored - isoinfo extraction via -J is unreliable
+__ARCHIVELIST__._iso_ext_flag(){
+    local archive_path="$1"
+    if isoinfo -d -i "$archive_path" 2>/dev/null | grep -q "Rock Ridge signatures"; then
+        echo "-R"
+    else
+        echo ""
+    fi
+}
+
 __ARCHIVELIST__._format_size(){
     local size="$1"
     if [[ ! "$size" =~ ^[0-9]+$ ]]; then
@@ -296,19 +308,9 @@ __ARCHIVELIST__._load_full_archive(){
             # Try Rock Ridge (-R) first for correct case, then Joliet (-J),
             # then plain ISO 9660 as fallback.
             if command -v isoinfo &>/dev/null; then
-                # Detect which extensions are available
-                local _ext_flag=""
-                if isoinfo -R -f -i "$archive_path" &>/dev/null 2>&1; then
-                    local _rr_test
-                    _rr_test=$(isoinfo -R -f -i "$archive_path" 2>/dev/null | head -1)
-                    # Rock Ridge names won't have ;1 suffix
-                    [[ "$_rr_test" != *";"* ]] && _ext_flag="-R"
-                fi
-                if [ -z "$_ext_flag" ]; then
-                    local _jr_test
-                    _jr_test=$(isoinfo -J -f -i "$archive_path" 2>/dev/null | head -1)
-                    [[ "$_jr_test" != *";"* ]] && _ext_flag="-J"
-                fi
+                # Detect which extensions are available via isoinfo -d
+                local _ext_flag
+                _ext_flag=$(__ARCHIVELIST__._iso_ext_flag "$archive_path")
 
                 # Build size map from -l output
                 # Format: perms links uid gid size month day year [ lba ] name
@@ -531,6 +533,7 @@ __ARCHIVELIST__.extract_files(){
     local archive_path=$(__ARCHIVELIST__.archive_path)
     local archive_type=$(__ARCHIVELIST__.archive_type)
 
+
     mkdir -p "$dest" 2>/dev/null || return 1
 
     if [ ${#files[@]} -eq 0 ]; then
@@ -558,24 +561,27 @@ __ARCHIVELIST__.extract_files(){
                     ( cd "$dest" && rpm2cpio "$archive_path" | cpio -idm --quiet >/dev/null 2>&1 )
                 fi ;;
             iso)
-                # Extract all using best available extension flag
+                # Extract all files preserving directory structure
                 if command -v isoinfo &>/dev/null; then
-                    local _ext=""
-                    local _t
-                    _t=$(isoinfo -R -f -i "$archive_path" 2>/dev/null | head -1)
-                    [[ "$_t" != *";"* && -n "$_t" ]] && _ext="-R"
-                    if [ -z "$_ext" ]; then
-                        _t=$(isoinfo -J -f -i "$archive_path" 2>/dev/null | head -1)
-                        [[ "$_t" != *";"* && -n "$_t" ]] && _ext="-J"
-                    fi
+                    local _ext
+                    _ext=$(__ARCHIVELIST__._iso_ext_flag "$archive_path")
                     while IFS= read -r fp; do
                         [ -z "$fp" ] && continue
-                        # Without extensions, skip dirs (no ;1)
-                        [ -z "$_ext" ] && [[ "$fp" != *";"* ]] && continue
-                        local clean="${fp%;*}"
-                        local out_path="$dest/${clean#/}"
-                        mkdir -p "$(dirname "$out_path")" 2>/dev/null
-                        isoinfo $_ext -i "$archive_path" -x "$fp" >"$out_path" 2>/dev/null || true
+                        local clean out_path
+                        if [ -n "$_ext" ]; then
+                            # Rock Ridge: paths are long/lowercase, no ;1
+                            clean="${fp#/}"
+                            out_path="$dest/$clean"
+                            mkdir -p "$(dirname "$out_path")" 2>/dev/null
+                            isoinfo -R -i "$archive_path" -x "/$clean" >"$out_path" 2>/dev/null || true
+                        else
+                            # Plain/Joliet: paths have ;1, skip dirs (no ;1)
+                            [[ "$fp" != *";"* ]] && continue
+                            clean="${fp%;*}"
+                            out_path="$dest/${clean#/}"
+                            mkdir -p "$(dirname "$out_path")" 2>/dev/null
+                            isoinfo -i "$archive_path" -x "$fp" >"$out_path" 2>/dev/null || true
+                        fi
                     done < <(isoinfo $_ext -f -i "$archive_path" 2>/dev/null)
                 fi ;;
         esac
@@ -649,23 +655,20 @@ __ARCHIVELIST__.extract_files(){
                     rm -rf "$tmp"
                 fi ;;
             iso)
-                # Extract specific files - try RR, Joliet, plain in order
+                # Extract specific files flat into dest (ignore internal path)
+                # Extract specific files flat into dest (ignore internal path)
                 if command -v isoinfo &>/dev/null; then
-                    local _ext=""
-                    local _t
-                    _t=$(isoinfo -R -f -i "$archive_path" 2>/dev/null | head -1)
-                    [[ "$_t" != *";"* && -n "$_t" ]] && _ext="-R"
-                    if [ -z "$_ext" ]; then
-                        _t=$(isoinfo -J -f -i "$archive_path" 2>/dev/null | head -1)
-                        [[ "$_t" != *";"* && -n "$_t" ]] && _ext="-J"
-                    fi
+                    local _ext
+                    _ext=$(__ARCHIVELIST__._iso_ext_flag "$archive_path")
                     for f in "${files[@]}"; do
-                        local out_path="$dest/$f"
-                        mkdir -p "$(dirname "$out_path")" 2>/dev/null
+                        local basename="${f##*/}"
+                        local out_path="$dest/$basename"
                         if [ -n "$_ext" ]; then
-                            isoinfo $_ext -i "$archive_path" -x "/$f" >"$out_path" 2>/dev/null || true
+                            # Rock Ridge: stored paths are long/lowercase, use -R -x directly
+                            isoinfo -R -i "$archive_path" -x "/$f" >"$out_path" 2>/dev/null || true
                         else
-                            { isoinfo -i "$archive_path" -x "/${f};1" >"$out_path" 2>/dev/null ||                               isoinfo -i "$archive_path" -x "/$f"      >"$out_path" 2>/dev/null; } || true
+                            # Plain/Joliet: stored paths are uppercase without ;1, add it back
+                            isoinfo -i "$archive_path" -x "/${f^^};1" >"$out_path" 2>/dev/null || true
                         fi
                     done
                 fi ;;

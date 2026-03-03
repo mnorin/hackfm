@@ -290,14 +290,14 @@ __PANEL__._publish_dir(){
     "$broker.publish" "panel.active.dir_changed" "$path"
 }
 
-# Publish cursor moved (only when active and broker is set)
-__PANEL__._publish_cursor_moved(){
-    local active=$(__PANEL__.active)
-    [ "$active" != "1" ] && return
-    local broker=$(__PANEL__.message_broker)
-    [ -z "$broker" ] && return
-    declare -F "$broker.publish" &>/dev/null || return
-    "$broker.publish" "panel.cursor_moved" ""
+# Handle incoming broker messages
+__PANEL__.process_message(){
+    local topic="$1"
+    case "$topic" in
+        dialog_closed|viewer_closed)
+            __PANEL__.render
+            ;;
+    esac
 }
 
 
@@ -812,8 +812,6 @@ __PANEL__.navigate(){
 
         __PANEL__.draw_info_bar
     fi
-
-    __PANEL__._publish_cursor_moved
 }
 
 # Get selected item info
@@ -889,6 +887,11 @@ __PANEL__._enter_archive(){
     __PANEL__.archive_list.internal_path = "" || return 1
     __PANEL__.archive_list.load || return 1
 
+    # Save current filelist state so we can restore it on exit
+    __PANEL__.property saved_scroll    = "$($list.scroll)"
+    __PANEL__.property saved_selected  = "$($list.selected)"
+    __PANEL__.property saved_sort      = "$($list.sort_order)"
+
     # Mark panel as in archive mode
     __PANEL__.in_archive = 1
     __PANEL__.archive_path = "$archive_fullpath"
@@ -921,12 +924,22 @@ __PANEL__._exit_archive(){
     # Load the directory containing the archive
     $list.path = "$archive_dir"
     cd "$archive_dir" 2>/dev/null || true
-    
-    # Find and select the archive file
-    local height=$(__PANEL__.height)
-    local visible_rows=$((height - 3))
-    $list.find_and_select "$archive_file" $visible_rows
-    
+
+    # Restore saved state from before we entered the archive
+    local saved_scroll=$(__PANEL__.property saved_scroll)
+    local saved_selected=$(__PANEL__.property saved_selected)
+    local saved_sort=$(__PANEL__.property saved_sort)
+
+    if [ -n "$saved_sort" ]; then
+        $list.sort_order = "$saved_sort"
+    fi
+    if [ -n "$saved_selected" ]; then
+        $list.selected = "$saved_selected"
+    fi
+    if [ -n "$saved_scroll" ]; then
+        $list.scroll = "$saved_scroll"
+    fi
+
     # Clear archive mode flags
     __PANEL__.in_archive = 0
     __PANEL__.archive_path = ""

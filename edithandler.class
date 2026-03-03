@@ -1,0 +1,74 @@
+# edithandler.class - Edit dispatch layer for HackFM
+# Handles edit.conf lookup, default_editor from hackfm.conf,
+# external editor execution, error dialogs.
+# Falls back to editor.class for internal editing.
+#
+# Usage:
+#   edithandler.open filepath
+
+__EDITHANDLER__._lookup_conf() {
+    local filepath="$1"
+    local ext="${filepath##*.}"
+    ext="${ext,,}"
+    local edit_conf="$HACKFM_DIR/conf/edit.conf"
+    [ -f "$edit_conf" ] || return
+    while IFS= read -r conf_line || [ -n "$conf_line" ]; do
+        [[ -z "$conf_line" || "$conf_line" == \#* ]] && continue
+        local conf_ext="${conf_line%% *}"
+        local conf_cmd="${conf_line#*[[:space:]]}"
+        while [[ "$conf_cmd" == [[:space:]]* ]]; do conf_cmd="${conf_cmd#?}"; done
+        if [ "${conf_ext,,}" = "$ext" ]; then
+            echo "$conf_cmd"
+            return
+        fi
+    done < "$edit_conf"
+}
+
+__EDITHANDLER__._run_external() {
+    local handler="$1"
+    local filepath="$2"
+    tui.screen.main
+    tui.cursor.show
+    tui.cursor.style.default
+    stty sane
+    export HACKFM_FILE="$filepath"
+    local cmd
+    if [[ "$handler" == *%f* ]]; then
+        cmd="${handler//%f/\"\$HACKFM_FILE\"}"
+    else
+        cmd="$handler \"\$HACKFM_FILE\""
+    fi
+    eval "$cmd" < /dev/tty > /dev/tty 2>&1 || true
+    tui.screen.alt
+}
+
+edithandler.open() {
+    local filepath="$1"
+
+    # Check edit.conf for extension-specific editor
+    local handler
+    handler=$(__EDITHANDLER__._lookup_conf "$filepath")
+
+    # Fall back to default_editor from hackfm.conf
+    if [ -z "$handler" ]; then
+        handler=$(conf_get default_editor "")
+    fi
+
+    # External editor
+    if [ -n "$handler" ]; then
+        local editor_bin="${handler%% *}"
+        if ! command -v "$editor_bin" &>/dev/null; then
+            _draw_error_dialog "Editor not found" \
+                "Editor \"$editor_bin\" is not found." \
+                "Check conf/hackfm.conf or conf/edit.conf"
+            read -r -s -n1 -t10 < /dev/tty || true
+            return 1
+        fi
+        __EDITHANDLER__._run_external "$handler" "$filepath"
+        return 0
+    fi
+
+    # Internal editor
+    file_editor.open "$filepath"
+    return 0
+}
