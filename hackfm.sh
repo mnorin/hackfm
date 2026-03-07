@@ -658,7 +658,6 @@ edit_file() {
 
     edithandler.open "$filepath"
 
-    reload_active_panel
     broker.publish "editor_closed" ""
 }
 
