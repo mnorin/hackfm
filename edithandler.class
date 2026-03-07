@@ -69,6 +69,6 @@ edithandler.open() {
     fi
 
     # Internal editor
-    file_editor.open "$filepath"
+    "$HACKFM_DIR/editor.sh" "$filepath" || true
     return 0
 }

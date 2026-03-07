@@ -294,7 +294,7 @@ __PANEL__._publish_dir(){
 __PANEL__.process_message(){
     local topic="$1"
     case "$topic" in
-        dialog_closed|viewer_closed)
+        dialog_closed|viewer_closed|editor_closed)
             __PANEL__.render
             ;;
     esac

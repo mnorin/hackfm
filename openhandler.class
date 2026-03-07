@@ -1,0 +1,104 @@
+# openhandler.class - Open dispatch layer for HackFM
+# Handles ext.conf lookup and file execution.
+# For terminal execution, coordinates with hackfm via message broker.
+#
+# Usage:
+#   openhandler.open filepath
+
+__OPENHANDLER__._lookup_conf() {
+    local filepath="$1"
+    local ext="${filepath##*.}"
+    ext="${ext,,}"
+    local ext_conf="$HACKFM_DIR/conf/ext.conf"
+    [ -f "$ext_conf" ] || return
+    while IFS= read -r conf_line || [ -n "$conf_line" ]; do
+        [[ -z "$conf_line" || "$conf_line" == \#* ]] && continue
+        local conf_ext="${conf_line%% *}"
+        local conf_cmd="${conf_line#*[[:space:]]}"
+        while [[ "$conf_cmd" == [[:space:]]* ]]; do conf_cmd="${conf_cmd#?}"; done
+        if [ "${conf_ext,,}" = "$ext" ]; then
+            echo "$conf_cmd"
+            return
+        fi
+    done < "$ext_conf"
+}
+
+__OPENHANDLER__._open_in_terminal() {
+    local filepath="$1"
+    local filedir
+    filedir=$(dirname "$filepath")
+    local filename
+    filename=$(basename "$filepath")
+
+    broker.publish "ui.terminal_enter" ""
+
+    echo "${USER}@$(hostname):${filedir}\$ ${filename}"
+    tui.cursor.show
+
+    trap - ERR
+    set +e
+    "$filepath"
+    local _exit=$?
+    set -e
+    trap 'error_handler $LINENO' ERR
+
+    echo ""
+    echo "--- Program exited with code $_exit. Press any key ---"
+    read -rsn1
+
+    broker.publish "ui.terminal_exit" ""
+}
+
+__OPENHANDLER__._open_in_new_terminal() {
+    local filepath="$1"
+    local filedir
+    filedir=$(dirname "$filepath")
+
+    local terminal=""
+    for t in x-terminal-emulator xterm gnome-terminal konsole xfce4-terminal; do
+        command -v "$t" &>/dev/null && terminal="$t" && break
+    done
+
+    [ -z "$terminal" ] && return 1
+
+    local cmd="cd $(printf '%q' "$filedir") && $(printf '%q' "$filepath"); echo; read -rsn1 -p '--- Press any key ---'"
+    case "$terminal" in
+        gnome-terminal) "$terminal" --working-directory="$filedir" -- bash -c "$cmd" &>/dev/null & ;;
+        *)              "$terminal" -e "bash -c $(printf '%q' "$cmd")" &>/dev/null & ;;
+    esac
+}
+
+openhandler.open() {
+    local filepath="$1"
+
+    # Check ext.conf for a handler
+    local handler
+    handler=$(__OPENHANDLER__._lookup_conf "$filepath")
+
+    if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
+        # ext.conf handler - launch in background (GUI or external tool)
+        export HACKFM_FILE="$filepath"
+        local cmd
+        if [[ "$handler" == *%f* ]]; then
+            cmd="${handler//%f/\"\$HACKFM_FILE\"}"
+        else
+            cmd="$handler \"\$HACKFM_FILE\""
+        fi
+        eval "$cmd" &>/dev/null &
+        return
+    fi
+
+    # No ext.conf handler - treat as executable
+    if [ ! -x "$filepath" ]; then
+        return
+    fi
+
+    local in_terminal
+    in_terminal=$(conf_get open_execute_in_terminal 0)
+
+    if [ "$in_terminal" = "1" ]; then
+        __OPENHANDLER__._open_in_new_terminal "$filepath"
+    else
+        __OPENHANDLER__._open_in_terminal "$filepath"
+    fi
+}
