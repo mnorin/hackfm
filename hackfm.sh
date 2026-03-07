@@ -84,9 +84,9 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/filelist.h"
 . "$HACKFM_DIR/archivelist.h"
 . "$HACKFM_DIR/panel.h"
-. "$HACKFM_DIR/editor.h"
 . "$HACKFM_DIR/viewhandler.class"
 . "$HACKFM_DIR/edithandler.class"
+. "$HACKFM_DIR/openhandler.class"
 . "$HACKFM_DIR/dialogs.class"
 . "$HACKFM_DIR/fs.class"
 . "$HACKFM_DIR/usermenu.h"
@@ -191,6 +191,21 @@ CUSTOM_INPUT_RESULT=""
 
 
 
+# Terminal lifecycle handlers - called by broker on ui.terminal_enter/exit
+handle_terminal_enter() {
+    tui.screen.main
+    tui.cursor.show
+    stty sane
+}
+
+handle_terminal_exit() {
+    tui.screen.alt
+    stty -echo 2>/dev/null
+    main_frame.setup
+    reload_both_panels
+    draw_screen
+}
+
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
@@ -256,9 +271,6 @@ init() {
     # Set active AFTER filelist is created
     right_panel.active = 0
     
-    # Create file editor
-    editor file_editor
-    
     # Create dialog
     tui_dialog file_dialog
     
@@ -286,6 +298,10 @@ init() {
     right_panel.message_broker = broker
     cmd.message_broker = broker
 
+    # Subscribe to terminal lifecycle events from openhandler
+    broker.subscribe "ui.terminal_enter" "handle_terminal_enter"
+    broker.subscribe "ui.terminal_exit" "handle_terminal_exit"
+
     # Subscribe panels and command line to dialog_closed for automatic repaint
     broker.subscribe "dialog_closed" "left_panel.process_message"
     broker.subscribe "dialog_closed" "right_panel.process_message"
@@ -296,6 +312,12 @@ init() {
     broker.subscribe "viewer_closed" "right_panel.process_message"
     broker.subscribe "viewer_closed" "draw_command_line"
     broker.subscribe "viewer_closed" "draw_main_frame"
+
+    # Subscribe full redraw components to editor_closed
+    broker.subscribe "editor_closed" "left_panel.process_message"
+    broker.subscribe "editor_closed" "right_panel.process_message"
+    broker.subscribe "editor_closed" "draw_command_line"
+    broker.subscribe "editor_closed" "draw_main_frame"
 
     # Wire dialog to panels for status messages
     left_panel.dialog = file_dialog
@@ -478,76 +500,9 @@ open_item() {
     # Panel handles directory navigation, archive browsing, and ext.conf lookup
     # We only handle file open actions here
 
-    if [[ "$action" == open:* ]]; then
+    if [[ "$action" == open:* ]] || [[ "$action" == execute:* ]]; then
         local filepath="${action#*:}"
-        local ext="${filepath##*.}"
-        ext="${ext,,}"
-
-        # Read ext.conf handler (panel already checked it exists, but we need the command)
-        local handler=""
-        local ext_conf="$HACKFM_DIR/conf/ext.conf"
-        if [ -f "$ext_conf" ]; then
-            while IFS=' ' read -r conf_ext conf_cmd || [ -n "$conf_ext" ]; do
-                [ -z "$conf_ext" ] || [[ "$conf_ext" == \#* ]] && continue
-                if [ "${conf_ext,,}" = "$ext" ]; then
-                    handler="$conf_cmd"
-                    break
-                fi
-            done < "$ext_conf"
-        fi
-
-        if [ -n "$handler" ] && command -v "${handler%% *}" &>/dev/null; then
-            $handler "$filepath" &>/dev/null &
-        fi
-        # No handler or program not found - do nothing
-
-    elif [[ "$action" == execute:* ]]; then
-        local filepath="${action#*:}"
-        local in_terminal=$(conf_get open_execute_in_terminal 0)
-
-        if [ "$in_terminal" = "1" ]; then
-            # Open a new terminal window in the file's directory, run program there
-            local filedir=$(dirname "$filepath")
-            local terminal=""
-            for t in x-terminal-emulator xterm gnome-terminal konsole xfce4-terminal; do
-                command -v "$t" &>/dev/null && terminal="$t" && break
-            done
-            if [ -n "$terminal" ]; then
-                local cmd="cd $(printf '%q' "$filedir") && $(printf '%q' "$filepath"); echo; read -rsn1 -p '--- Press any key ---'"
-                case "$terminal" in
-                    gnome-terminal) "$terminal" --working-directory="$filedir" -- bash -c "$cmd" &>/dev/null & ;;
-                    *)              "$terminal" -e "bash -c $(printf '%q' "$cmd")" &>/dev/null & ;;
-                esac
-            fi
-            # Panels stay visible - no screen switch needed
-        else
-            # Run inline on primary screen (original behaviour, accessible via Ctrl-O)
-            tui.screen.main
-            stty sane
-
-            local filedir=$(dirname "$filepath")
-            local filename=$(basename "$filepath")
-            echo "${USER}@$(hostname):${filedir}\$ ${filename}"
-            tui.cursor.show
-
-            trap - ERR
-            set +e
-            "$filepath"
-            local _exit=$?
-            set -e
-            trap '__ba_err_report $? $LINENO' ERR
-
-            echo ""
-            echo "--- Program exited with code $_exit. Press any key ---"
-            read -rsn1
-            tui.cursor.hide
-
-            tui.screen.alt
-            stty -echo 2>/dev/null
-            main_frame.setup
-            reload_both_panels
-            draw_screen
-        fi
+        openhandler.open "$filepath"
     fi
     # action="" or "ok" - nothing to do
 }
@@ -703,8 +658,7 @@ edit_file() {
 
     edithandler.open "$filepath"
 
-    reload_active_panel
-    broker.publish "dialog_closed" ""
+    broker.publish "editor_closed" ""
 }
 
 # Make directory (F7)

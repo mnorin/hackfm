@@ -83,7 +83,7 @@ __VIEWER__.load(){
         while IFS= read -r line; do
             line="${line%$'\r'}"
             __VIEWER__._append_chunks "$line" "$cols"
-        done < <(tr '\000-\010\013-\037\177-\377' '.' < "$filepath")
+        done < <(tr '\000-\010\013-\037\177' '.' < "$filepath")
     else
         __VIEWER__.use_window = 1
         __VIEWER__._load_window 0
@@ -113,7 +113,7 @@ __VIEWER__._load_window(){
         __VIEWER__._append_chunks "$line" "$cols"
         count=$(( count + 1 ))
         [ $count -ge $VIEWER_WINDOW_SIZE ] && break
-    done < <(tail -n +"$((from_line + 1))" "$filepath" 2>/dev/null | tr '\000-\010\013-\037\177-\377' '.')
+    done < <(tail -n +"$((from_line + 1))" "$filepath" 2>/dev/null | tr '\000-\010\013-\037\177' '.')
 }
 
 # ============================================================================
