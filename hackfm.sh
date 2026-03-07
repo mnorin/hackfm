@@ -206,6 +206,11 @@ handle_terminal_exit() {
     draw_screen
 }
 
+# process_message wrappers for plain function broker subscribers
+handle_terminal_enter.process_message() { handle_terminal_enter; }
+handle_terminal_exit.process_message()  { handle_terminal_exit;  }
+draw_main_frame.process_message()       { draw_main_frame;       }
+
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
@@ -294,29 +299,18 @@ init() {
         msgbroker broker
         BROKER_CREATED=1
     fi
-    left_panel.message_broker = broker
-    right_panel.message_broker = broker
-    cmd.message_broker = broker
+
+    # Register objects with broker - each object subscribes to topics it cares about
+    left_panel.register broker
+    right_panel.register broker
+    cmd.register broker
 
     # Subscribe to terminal lifecycle events from openhandler
     broker.subscribe "ui.terminal_enter" "handle_terminal_enter"
     broker.subscribe "ui.terminal_exit" "handle_terminal_exit"
 
-    # Subscribe panels and command line to dialog_closed for automatic repaint
-    broker.subscribe "dialog_closed" "left_panel.process_message"
-    broker.subscribe "dialog_closed" "right_panel.process_message"
-    broker.subscribe "dialog_closed" "draw_command_line"
-
-    # Subscribe full redraw components to viewer_closed
-    broker.subscribe "viewer_closed" "left_panel.process_message"
-    broker.subscribe "viewer_closed" "right_panel.process_message"
-    broker.subscribe "viewer_closed" "draw_command_line"
+    # Subscribe draw_main_frame to topics that require full redraw
     broker.subscribe "viewer_closed" "draw_main_frame"
-
-    # Subscribe full redraw components to editor_closed
-    broker.subscribe "editor_closed" "left_panel.process_message"
-    broker.subscribe "editor_closed" "right_panel.process_message"
-    broker.subscribe "editor_closed" "draw_command_line"
     broker.subscribe "editor_closed" "draw_main_frame"
 
     # Wire dialog to panels for status messages

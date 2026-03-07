@@ -81,15 +81,18 @@ declare -ag __COMMANDLINE___history=()
 __COMMANDLINE__.message_broker(){
     if [ "$1" = "=" ]; then
         __COMMANDLINE__.property message_broker = "$2"
-        # Auto-subscribe when broker is set
-        local broker="$2"
-        if [ -n "$broker" ] && declare -F "$broker.subscribe" &>/dev/null; then
-            "$broker.subscribe" "panel.active.dir_changed" "__COMMANDLINE__.process_message"
-            "$broker.subscribe" "ui.menu_closed" "__COMMANDLINE__.process_message"
-        fi
     else
         __COMMANDLINE__.property message_broker
     fi
+}
+
+__COMMANDLINE__.register(){
+    local broker="$1"
+    __COMMANDLINE__.message_broker = "$broker"
+    $broker.subscribe "panel.active.dir_changed" "__COMMANDLINE__"
+    $broker.subscribe "ui.menu_closed" "__COMMANDLINE__"
+    $broker.subscribe "viewer_closed" "__COMMANDLINE__"
+    $broker.subscribe "editor_closed" "__COMMANDLINE__"
 }
 
 # Handle incoming broker messages
@@ -101,7 +104,7 @@ __COMMANDLINE__.process_message(){
             __COMMANDLINE__.prompt = "$USER@$(hostname):$data\$ "
             __COMMANDLINE__.render
             ;;
-        ui.menu_closed)
+        ui.menu_closed|viewer_closed|editor_closed)
             __COMMANDLINE__.render
             ;;
     esac

@@ -180,7 +180,9 @@ __PANEL__.render_row_string(){
     fi
 
     # Name column
-    if [ $is_cursor -eq 1 ]; then
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
         row+="$_PC_BLACK"
     elif [ $is_marked_file -eq 1 ]; then
         row+="$_PC_YELLOW$_PC_BOLD"
@@ -202,8 +204,12 @@ __PANEL__.render_row_string(){
     row+="│"
 
     # Size column
-    if [ $is_cursor -eq 1 ]; then
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
         row+="$_PC_BLACK"
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_YELLOW$_PC_BOLD"
     elif [ "$item_type" = "d" ]; then
         row+="$_PC_WHITE$_PC_BOLD"
     else
@@ -221,8 +227,12 @@ __PANEL__.render_row_string(){
     row+="│"
 
     # Time column
-    if [ $is_cursor -eq 1 ]; then
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
         row+="$_PC_BLACK"
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_YELLOW$_PC_BOLD"
     elif [ "$item_type" = "d" ]; then
         row+="$_PC_WHITE$_PC_BOLD"
     else
@@ -291,6 +301,13 @@ __PANEL__._publish_dir(){
 }
 
 # Handle incoming broker messages
+__PANEL__.register(){
+    local broker="$1"
+    $broker.subscribe "dialog_closed" "__PANEL__"
+    $broker.subscribe "viewer_closed" "__PANEL__"
+    $broker.subscribe "editor_closed" "__PANEL__"
+}
+
 __PANEL__.process_message(){
     local topic="$1"
     case "$topic" in

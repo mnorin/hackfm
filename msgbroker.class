@@ -47,12 +47,13 @@ __MSGBROKER__.publish(){
         return 0  # No subscribers, that's okay
     fi
     
-    # Call each handler with topic and data
+    # Call each subscriber's process_message method with topic and data
     for handler in $handlers; do
-        if declare -F "$handler" &>/dev/null; then
-            "$handler" "$topic" "$data"
+        local method="$handler.process_message"
+        if declare -F "$method" &>/dev/null; then
+            "$method" "$topic" "$data"
         else
-            echo "Warning: handler '$handler' for topic '$topic' not found" >&2
+            echo "Warning: process_message not found for '$handler' on topic '$topic'" >&2
         fi
     done
 }
