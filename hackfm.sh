@@ -87,6 +87,7 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/viewhandler.class"
 . "$HACKFM_DIR/edithandler.class"
 . "$HACKFM_DIR/openhandler.class"
+. "$HACKFM_DIR/fileattr.h"
 . "$HACKFM_DIR/dialogs.class"
 . "$HACKFM_DIR/fs.class"
 . "$HACKFM_DIR/usermenu.h"
@@ -554,12 +555,13 @@ show_menu() {
         
         # File menu
         main_menu.add_item "File"
-        main_menu.add_subitem "File" "View" "F3" "view_file"
-        main_menu.add_subitem "File" "Edit" "F4" "edit_file"
-        main_menu.add_subitem "File" "Copy" "F5" "copy_file"
-        main_menu.add_subitem "File" "Move" "F6" "move_file"
-        main_menu.add_subitem "File" "MkDir" "F7" "make_directory"
-        main_menu.add_subitem "File" "Delete" "F8" "delete_file"
+        main_menu.add_subitem "File" "View"       "F3"     "view_file"
+        main_menu.add_subitem "File" "Edit"       "F4"     "edit_file"
+        main_menu.add_subitem "File" "Attributes" "Ctrl-A" "show_attributes"
+        main_menu.add_subitem "File" "Copy"       "F5"     "copy_file"
+        main_menu.add_subitem "File" "Move"       "F6"     "move_file"
+        main_menu.add_subitem "File" "MkDir"      "F7"     "make_directory"
+        main_menu.add_subitem "File" "Delete"     "F8"     "delete_file"
         
         # Command menu
         main_menu.add_item "Command"
@@ -638,6 +640,32 @@ view_file() {
 
     broker.publish "viewer_closed" ""
 }
+# Show file attributes dialog (Ctrl-A)
+show_attributes() {
+    local filename filetype path
+    IFS='|' read -r filename filetype path <<< "$(get_selected_item)"
+
+    if [ "$filename" = "<empty>" ] || [ "$filename" = ".." ]; then
+        return
+    fi
+
+    local filepath="$path/$filename"
+
+    fileattr fa
+    fa.show "$filepath"
+    local result
+    result=$(fa.result)
+    fa.destroy
+
+    if [ "$result" = "0" ]; then
+        # Attributes changed — reload the active panel so file list reflects new mode
+        local active_panel
+        active_panel=$(get_active_panel)
+        $active_panel.reload
+    fi
+    broker.publish "dialog_closed" ""
+}
+
 edit_file() {
     tui.color.reset
 
@@ -824,6 +852,13 @@ main_loop() {
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     local active_panel=$(get_active_panel)
                     $active_panel.quick_search
+                fi
+                ;;
+
+            # Ctrl+A - File attributes
+            CTRL-A)
+                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
+                    show_attributes
                 fi
                 ;;
                 
