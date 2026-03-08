@@ -79,22 +79,13 @@ trap 'resize_handler' WINCH
 . "$HACKFM_DIR/tui/style.class"
 
 # Load components (from HackFM directory)
-. "$HACKFM_DIR/appframe.h"
-. "$HACKFM_DIR/dialog.h"
-. "$HACKFM_DIR/filelist.h"
-. "$HACKFM_DIR/archivelist.h"
-. "$HACKFM_DIR/panel.h"
+. "$HACKFM_DIR/hackfmlib.h"
 . "$HACKFM_DIR/viewhandler.class"
 . "$HACKFM_DIR/edithandler.class"
 . "$HACKFM_DIR/openhandler.class"
-. "$HACKFM_DIR/fileattr.h"
+. "$HACKFM_DIR/quickdir.class"
 . "$HACKFM_DIR/dialogs.class"
 . "$HACKFM_DIR/fs.class"
-. "$HACKFM_DIR/usermenu.h"
-. "$HACKFM_DIR/commandline.h"
-. "$HACKFM_DIR/msgbroker.h"
-. "$HACKFM_DIR/menu.h"
-. "$HACKFM_DIR/fkeybar.h"
 
 # App state
 ACTIVE_PANEL=0
@@ -640,6 +631,20 @@ view_file() {
 
     broker.publish "viewer_closed" ""
 }
+# Quick directory jump (Ctrl-D)
+show_quickdir() {
+    local active_panel
+    active_panel=$(get_active_panel)
+
+    quickdir.show "$active_panel"
+
+    if [ -n "$__QUICKDIR_result" ]; then
+        $active_panel.goto "$__QUICKDIR_result"
+    else
+        $active_panel.render
+    fi
+}
+
 # Show file attributes dialog (Ctrl-A)
 show_attributes() {
     local filename filetype path
@@ -852,6 +857,13 @@ main_loop() {
                 if [ $PANELS_VISIBLE -eq 1 ]; then
                     local active_panel=$(get_active_panel)
                     $active_panel.quick_search
+                fi
+                ;;
+
+            # Ctrl+D - Quick directory jump
+            CTRL-D)
+                if [ $PANELS_VISIBLE -eq 1 ]; then
+                    show_quickdir
                 fi
                 ;;
 

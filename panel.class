@@ -845,6 +845,19 @@ __PANEL__.get_selected_item(){
     echo "$filename|$filetype|$path"
 }
 
+# Navigate panel to an arbitrary directory path
+__PANEL__.goto(){
+    local new_path="$1"
+    [ -d "$new_path" ] || return
+    local list=$(__PANEL__.list_source)
+    $list.path = "$new_path"
+    cd "$new_path" 2>/dev/null || true
+    $list.load
+    __PANEL__.prerender_all_rows
+    __PANEL__.render
+    __PANEL__._publish_dir
+}
+
 # Reload panel's filelist from disk (re-scans current directory to pick up changes)
 __PANEL__.reload(){
     local list=$(__PANEL__.list_source)
