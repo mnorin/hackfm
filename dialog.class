@@ -19,7 +19,7 @@ __DIALOG__.message(){     __DIALOG__.property message     "$@"; }
 __DIALOG__.input_value(){ __DIALOG__.property input_value "$@"; }
 __DIALOG__.result(){      __DIALOG__.property result      "$@"; }
 
-# Show input dialog - returns 0 if OK, 1 if Cancel
+# Show input dialog - always returns 0; check dialog.result (0=OK, 1=Cancel)
 # Usage: dialog.show_input "Title" "Message" "default_value"
 # Result in dialog.input_value
 __DIALOG__.show_input(){
@@ -160,13 +160,13 @@ __DIALOG__.show_input(){
                 else
                     # Cancel
                     __DIALOG__.result = 1
-                    return 1
+                    return 0
                 fi
                 ;;
             ESC)
                 tui.cursor.hide
                 __DIALOG__.result = 1
-                return 1
+                return 0
                 ;;
             TAB)
                 # Cycle focus: input -> OK -> Cancel -> input
@@ -238,7 +238,7 @@ __DIALOG__.show_input(){
     done
 }
 
-# Show confirmation dialog - returns 0 if Yes, 1 if No
+# Show confirmation dialog - always returns 0; check dialog.result (0=Yes, 1=No, 2=ESC)
 # Usage: dialog.show_confirm "Title" "Question?"
 __DIALOG__.show_confirm(){
     local title="$1"
@@ -339,7 +339,7 @@ __DIALOG__.show_confirm(){
                     return 0
                 else
                     __DIALOG__.result = 1
-                    return 1
+                    return 0
                 fi
                 ;;
             LEFT|RIGHT|TAB)
@@ -351,11 +351,11 @@ __DIALOG__.show_confirm(){
                 ;;
             n|N)
                 __DIALOG__.result = 1
-                return 1
+                return 0
                 ;;
             ESC)
                 __DIALOG__.result = 2
-                return 2
+                return 0
                 ;;
         esac
     done

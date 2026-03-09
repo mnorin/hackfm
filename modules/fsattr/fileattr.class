@@ -1,0 +1,422 @@
+#!/bin/bash
+# fileattr.class - File attributes dialog for HackFM
+# Shows and edits file permissions (chmod) with checkboxes.
+# Owner and group are shown read-only.
+# Instantiate, call show, then destroy from the caller.
+#
+# Usage:
+#   fileattr fa
+#   fa.show "$filepath"
+#   [ "$(fa.result)" = "0" ] && echo applied
+#   fa.destroy
+
+declare -Ag __FILEATTR___properties=()
+
+__FILEATTR__.property(){
+    if [ "$2" = "=" ]; then
+        __FILEATTR___properties[$1]="$3"
+    else
+        echo "${__FILEATTR___properties[$1]}"
+    fi
+}
+
+__FILEATTR__.filepath(){ __FILEATTR__.property filepath "$@"; }
+__FILEATTR__.result(){  __FILEATTR__.property result  "$@"; }
+
+# ============================================================================
+# Layout
+# Dialog is 44 cols wide, 16 rows tall.
+#
+# Focus indices:
+#   Checkbox grid  (row 0-2, col 0-3):  focus = row*4 + col
+#     col 0 = Read, col 1 = Write, col 2 = Exec, col 3 = Special
+#   Buttons:  12 = Apply,  13 = Cancel
+#
+# Bit array indices:
+#   0=suid  1=sgid  2=sticky
+#   3=ur    4=uw    5=ux
+#   6=gr    7=gw    8=gx
+#   9=or   10=ow   11=ox
+# ============================================================================
+
+# Column screen offsets relative to dc+2 (left inner edge):
+#   label:    col  0  (8 chars wide, then 1 gap)
+#   col0 [R]: col  9
+#   col1 [W]: col 13
+#   col2 [X]: col 17
+#   col3 Sp:  col 21
+_FA_DW=44
+_FA_DH=16
+_FA_COL_LABEL=0
+_FA_COL_R=9
+_FA_COL_W=13
+_FA_COL_X=17
+_FA_COL_SP=21
+
+# ============================================================================
+# Helpers: read file metadata
+# ============================================================================
+__FILEATTR__._read_mode(){  stat -c '%a' "$1" 2>/dev/null; }
+__FILEATTR__._read_owner(){ stat -c '%U' "$1" 2>/dev/null; }
+__FILEATTR__._read_group(){ stat -c '%G' "$1" 2>/dev/null; }
+
+# ============================================================================
+# mode <-> bits conversion
+# ============================================================================
+__FILEATTR__._mode_to_bits(){
+    local mode="$1"
+    while [ ${#mode} -lt 4 ]; do mode="0$mode"; done
+    local special=$(( 10#${mode:0:1} ))
+    local owner=$(( 10#${mode:1:1} ))
+    local group=$(( 10#${mode:2:1} ))
+    local other=$(( 10#${mode:3:1} ))
+    printf '%d %d %d %d %d %d %d %d %d %d %d %d\n' \
+        $(( (special & 4) > 0 ? 1 : 0 )) \
+        $(( (special & 2) > 0 ? 1 : 0 )) \
+        $(( (special & 1) > 0 ? 1 : 0 )) \
+        $(( (owner   & 4) > 0 ? 1 : 0 )) \
+        $(( (owner   & 2) > 0 ? 1 : 0 )) \
+        $(( (owner   & 1) > 0 ? 1 : 0 )) \
+        $(( (group   & 4) > 0 ? 1 : 0 )) \
+        $(( (group   & 2) > 0 ? 1 : 0 )) \
+        $(( (group   & 1) > 0 ? 1 : 0 )) \
+        $(( (other   & 4) > 0 ? 1 : 0 )) \
+        $(( (other   & 2) > 0 ? 1 : 0 )) \
+        $(( (other   & 1) > 0 ? 1 : 0 ))
+}
+
+__FILEATTR__._bits_to_mode(){
+    local -a b=("$@")
+    printf '%d%d%d%d' \
+        $(( b[0]*4 + b[1]*2 + b[2] )) \
+        $(( b[3]*4 + b[4]*2 + b[5] )) \
+        $(( b[6]*4 + b[7]*2 + b[8] )) \
+        $(( b[9]*4 + b[10]*2 + b[11] ))
+}
+
+# ============================================================================
+# Toggle helper — mutates named bits array via nameref
+# ============================================================================
+__FILEATTR__._toggle(){
+    local focus=$1
+    local -n _tb=$2
+    local row=$(( focus / 4 ))
+    local col=$(( focus % 4 ))
+    local -a row_offsets=(3 6 9)
+    local bit_idx
+    if [ $col -lt 3 ]; then
+        bit_idx=$(( row_offsets[row] + col ))
+    else
+        bit_idx=$row   # suid(0) / sgid(1) / sticky(2)
+    fi
+    _tb[bit_idx]=$(( _tb[bit_idx] ^ 1 ))
+}
+
+# ============================================================================
+# Draw a single checkbox cell
+# ============================================================================
+__FILEATTR__._draw_cell(){
+    local screen_row=$1
+    local screen_col=$2
+    local val=$3
+    local focused=$4
+    local label="$5"
+
+    tui.cursor.move $screen_row $screen_col
+    if [ "$focused" = "1" ]; then
+        tui.color.bg_cyan; tui.color.black
+    else
+        tui.color.bg_white; tui.color.black
+    fi
+    if [ "$val" = "1" ]; then
+        printf '[X]'
+    else
+        printf '[ ]'
+    fi
+    tui.color.reset
+    tui.color.bg_white; tui.color.black
+    if [ -n "$label" ]; then
+        printf ' %-5s' "$label"
+    else
+        printf ' '
+    fi
+    tui.color.reset
+}
+
+# ============================================================================
+# Draw the whole dialog
+# ============================================================================
+__FILEATTR__._draw(){
+    local dr=$1
+    local dc=$2
+    local filepath="$3"
+    local -n _bits=$4
+    local focus=$5
+    local owner="$6"
+    local group="$7"
+
+    local filename
+    filename=$(basename "$filepath")
+
+    # Shadow
+    tui.color.bg_black
+    local r
+    for ((r=dr+1; r<dr+_FA_DH+1; r++)); do
+        tui.cursor.move $r $((dc + 2))
+        printf "%${_FA_DW}s" ""
+    done
+    tui.color.reset
+
+    # Background
+    tui.color.bg_white; tui.color.black
+    for ((r=dr; r<dr+_FA_DH; r++)); do
+        tui.cursor.move $r $dc
+        printf "%${_FA_DW}s" ""
+    done
+
+    # Border
+    tui.box.draw $dr $dc $_FA_DW $_FA_DH
+
+    # Title
+    tui.cursor.move $dr $((dc + 2))
+    tui.color.bg_white; tui.color.black; tui.color.bold
+    printf ' File Attributes '
+    tui.color.reset
+
+    # Filename
+    local max_fn=$(( _FA_DW - 4 ))
+    [ ${#filename} -gt $max_fn ] && filename="${filename:0:$((max_fn - 3))}..."
+    tui.cursor.move $((dr + 1)) $((dc + 2))
+    tui.color.bg_white; tui.color.black
+    printf "%-${max_fn}s" "$filename"
+
+    # Owner / Group
+    tui.cursor.move $((dr + 2)) $((dc + 2))
+    tui.color.bg_white; tui.color.black
+    printf "Owner: %-10s  Group: %-10s" "$owner" "$group"
+
+    # Separator
+    tui.cursor.move $((dr + 3)) $dc
+    tui.color.bg_white; tui.color.black
+    printf '├'
+    local i
+    for ((i=0; i<_FA_DW-2; i++)); do printf '─'; done
+    printf '┤'
+
+    # Header row — each label is 4 chars wide: " X  " aligned over "[X] "
+    tui.cursor.move $((dr + 4)) $((dc + 2 + _FA_COL_LABEL))
+    tui.color.bg_white; tui.color.black; tui.color.bold
+    printf '%-8s' ''           # label column spacer
+    tui.color.reset
+    tui.cursor.move $((dr + 4)) $((dc + 2 + _FA_COL_R))
+    tui.color.bg_white; tui.color.black; tui.color.bold
+    printf ' R   W   X   Special'
+    tui.color.reset
+
+    # Checkbox rows (one per row, no blank line between)
+    local -a row_labels=("Owner" "Group" "Other")
+    local -a row_offsets=(3 6 9)
+    local -a spec_bits=(0 1 2)
+    local -a spec_labels=("SUID" "SGID" "Stky")
+
+    local row
+    for ((row=0; row<3; row++)); do
+        local screen_row=$(( dr + 5 + row ))
+        local base=${row_offsets[row]}
+        local inner=$((dc + 2))
+
+        # Label
+        tui.cursor.move $screen_row $((inner + _FA_COL_LABEL))
+        tui.color.bg_white; tui.color.black
+        printf '%-8s' "${row_labels[row]}"
+        tui.color.reset
+
+        # R
+        __FILEATTR__._draw_cell $screen_row $((inner + _FA_COL_R)) \
+            "${_bits[base]}" \
+            "$([ $focus -eq $((row*4+0)) ] && echo 1 || echo 0)" \
+            ""
+        # W
+        __FILEATTR__._draw_cell $screen_row $((inner + _FA_COL_W)) \
+            "${_bits[base+1]}" \
+            "$([ $focus -eq $((row*4+1)) ] && echo 1 || echo 0)" \
+            ""
+        # X
+        __FILEATTR__._draw_cell $screen_row $((inner + _FA_COL_X)) \
+            "${_bits[base+2]}" \
+            "$([ $focus -eq $((row*4+2)) ] && echo 1 || echo 0)" \
+            ""
+        # Special
+        __FILEATTR__._draw_cell $screen_row $((inner + _FA_COL_SP)) \
+            "${_bits[spec_bits[row]]}" \
+            "$([ $focus -eq $((row*4+3)) ] && echo 1 || echo 0)" \
+            "${spec_labels[row]}"
+    done
+
+    # Separator before buttons
+    tui.cursor.move $((dr + _FA_DH - 3)) $dc
+    tui.color.bg_white; tui.color.black
+    printf '├'
+    for ((i=0; i<_FA_DW-2; i++)); do printf '─'; done
+    printf '┤'
+
+    # Buttons
+    local btn_row=$(( dr + _FA_DH - 2 ))
+    local apply_col=$(( dc + _FA_DW/2 - 11 ))
+    tui.cursor.move $btn_row $apply_col
+    if [ $focus -eq 12 ]; then
+        tui.color.bg_cyan; tui.color.black; tui.color.bold
+    else
+        tui.color.bg_white; tui.color.black; tui.color.bold
+    fi
+    printf '[ Apply ]'
+    tui.color.reset
+    tui.color.bg_white; tui.color.black; printf '    '
+    if [ $focus -eq 13 ]; then
+        tui.color.bg_cyan; tui.color.black; tui.color.bold
+    else
+        tui.color.bg_white; tui.color.black; tui.color.bold
+    fi
+    printf '[ Cancel ]'
+    tui.color.reset
+}
+
+# ============================================================================
+# Navigation helpers
+# ============================================================================
+
+__FILEATTR__._focus_right(){
+    echo $(( ($1 + 1) % 14 ))
+}
+
+__FILEATTR__._focus_left(){
+    echo $(( ($1 + 13) % 14 ))
+}
+
+__FILEATTR__._focus_down(){
+    local f=$1
+    if [ $f -lt 8 ]; then
+        echo $(( f + 4 ))
+    elif [ $f -lt 12 ]; then
+        # row 2 -> buttons: col 0/1 -> Apply, col 2/3 -> Cancel
+        local col=$(( f % 4 ))
+        [ $col -lt 2 ] && echo 12 || echo 13
+    elif [ $f -eq 12 ]; then
+        echo 0   # Apply -> row 0 col 0
+    else
+        echo 2   # Cancel -> row 0 col 2
+    fi
+}
+
+__FILEATTR__._focus_up(){
+    local f=$1
+    if [ $f -ge 4 ] && [ $f -lt 12 ]; then
+        echo $(( f - 4 ))
+    elif [ $f -lt 4 ]; then
+        # row 0 -> buttons: col 0/1 -> Apply, col 2/3 -> Cancel
+        local col=$(( f % 4 ))
+        [ $col -lt 2 ] && echo 12 || echo 13
+    elif [ $f -eq 12 ]; then
+        echo 8   # Apply -> row 2 col 0
+    else
+        echo 10  # Cancel -> row 2 col 2
+    fi
+}
+
+# ============================================================================
+# Show the dialog (blocking). Returns 0=applied, 1=cancelled.
+# ============================================================================
+__FILEATTR__.show(){
+    local filepath="$1"
+    __FILEATTR__.filepath = "$filepath"
+
+    local mode owner group
+    mode=$(__FILEATTR__._read_mode "$filepath")
+    owner=$(__FILEATTR__._read_owner "$filepath")
+    group=$(__FILEATTR__._read_group "$filepath")
+
+    local bits_str
+    bits_str=$(__FILEATTR__._mode_to_bits "$mode")
+    local -a bits=($bits_str)
+
+    local size
+    size=$(tui.screen.size)
+    local rows=${size% *}
+    local cols=${size#* }
+    local dr=$(( (rows - _FA_DH) / 2 ))
+    local dc=$(( (cols - _FA_DW) / 2 ))
+
+    tui.cursor.hide
+
+    local focus=0
+    __FILEATTR__._draw $dr $dc "$filepath" bits $focus "$owner" "$group"
+
+    while true; do
+        local key
+        key=$(tui.input.key 2>&1) || true
+
+        case "$key" in
+            SPACE)
+                [ $focus -lt 12 ] && __FILEATTR__._toggle $focus bits
+                ;;
+            ENTER)
+                if [ $focus -eq 12 ]; then
+                    local new_mode
+                    new_mode=$(__FILEATTR__._bits_to_mode "${bits[@]}")
+                    chmod "$new_mode" "$filepath" 2>/dev/null
+                    __FILEATTR__.result = 0
+                    return
+                elif [ $focus -eq 13 ]; then
+                    __FILEATTR__.result = 1
+                    return
+                else
+                    __FILEATTR__._toggle $focus bits
+                fi
+                ;;
+            TAB|RIGHT)
+                focus=$(__FILEATTR__._focus_right $focus)
+                ;;
+            LEFT)
+                focus=$(__FILEATTR__._focus_left $focus)
+                ;;
+            DOWN)
+                focus=$(__FILEATTR__._focus_down $focus)
+                ;;
+            UP)
+                focus=$(__FILEATTR__._focus_up $focus)
+                ;;
+            ESC)
+                __FILEATTR__.result = 1
+                return
+                ;;
+        esac
+
+        __FILEATTR__._draw $dr $dc "$filepath" bits $focus "$owner" "$group"
+    done
+}
+
+# ============================================================================
+# Destructor
+# ============================================================================
+__FILEATTR__.destroy(){
+    unset __FILEATTR___properties
+    unset _FA_DW _FA_DH _FA_COL_LABEL _FA_COL_R _FA_COL_W _FA_COL_X _FA_COL_SP
+    unset -f \
+        __FILEATTR__.property \
+        __FILEATTR__.filepath \
+        __FILEATTR__.result \
+        __FILEATTR__._read_mode \
+        __FILEATTR__._read_owner \
+        __FILEATTR__._read_group \
+        __FILEATTR__._mode_to_bits \
+        __FILEATTR__._bits_to_mode \
+        __FILEATTR__._toggle \
+        __FILEATTR__._draw_cell \
+        __FILEATTR__._draw \
+        __FILEATTR__._focus_right \
+        __FILEATTR__._focus_left \
+        __FILEATTR__._focus_down \
+        __FILEATTR__._focus_up \
+        __FILEATTR__.show \
+        __FILEATTR__.destroy
+}

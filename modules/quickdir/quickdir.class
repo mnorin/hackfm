@@ -1,0 +1,172 @@
+#!/bin/bash
+# quickdir.class - Quick directory jump menu (Ctrl-D)
+# Reads conf/dirs.conf, shows a popup anchored to the active panel.
+# Static class — source directly, no instantiation needed.
+#
+# dirs.conf format:
+#   "key" "/path/to/dir" "Label"
+# Paths may contain environment variables ($HOME, $USER) and tilde (~).
+
+declare -ag __QUICKDIR_keys=() 2>/dev/null || true
+declare -ag __QUICKDIR_paths=() 2>/dev/null || true
+declare -ag __QUICKDIR_labels=() 2>/dev/null || true
+__QUICKDIR_result=""
+
+# ============================================================================
+# Parse conf/dirs.conf
+# ============================================================================
+quickdir._load(){
+    __QUICKDIR_keys=()
+    __QUICKDIR_paths=()
+    __QUICKDIR_labels=()
+
+    local conf="$HACKFM_DIR/conf/dirs.conf"
+    [ -f "$conf" ] || return
+
+    local line
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*$  ]] && continue
+        [[ "$line" =~ ^[[:space:]]*\# ]] && continue
+        if [[ "$line" =~ ^[[:space:]]*\"([^\"]+)\"[[:space:]]+\"([^\"]+)\"[[:space:]]+\"([^\"]+)\" ]]; then
+            __QUICKDIR_keys+=("${BASH_REMATCH[1]}")
+            # Expand ~ and environment variables in path
+            local expanded="${BASH_REMATCH[2]}"
+            expanded="${expanded/#\~/$HOME}"
+            expanded=$(eval "echo \"$expanded\"")
+            __QUICKDIR_paths+=("$expanded")
+            __QUICKDIR_labels+=("${BASH_REMATCH[3]}")
+        fi
+    done < "$conf"
+}
+
+# ============================================================================
+# Draw all rows — key + label only, no path
+# ============================================================================
+quickdir._draw_rows(){
+    local popup_r=$1 popup_c=$2 popup_w=$3 inner_w=$4 selected=$5
+    local count=${#__QUICKDIR_keys[@]}
+    local i
+    for ((i=0; i<count; i++)); do
+        local row=$(( popup_r + 1 + i ))
+        tui.cursor.move $row $popup_c
+        tui.color.bg_white; tui.color.black
+        printf "│"
+
+        if [ $i -eq $selected ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+
+        local item_text="${__QUICKDIR_keys[i]}  ${__QUICKDIR_labels[i]}"
+        printf " %-${inner_w}s " "${item_text:0:$inner_w}"
+
+        tui.color.bg_white; tui.color.black
+        printf "│"
+    done
+    tui.color.reset
+}
+
+# ============================================================================
+# Show the menu centered on the given panel.
+# Result in $__QUICKDIR_result (empty = cancelled).
+# ============================================================================
+quickdir.show(){
+    local panel="$1"
+
+    quickdir._load
+
+    local count=${#__QUICKDIR_keys[@]}
+    if [ $count -eq 0 ]; then
+        dialog.show_message "Quick Dir" "No entries in conf/dirs.conf"
+        __QUICKDIR_result=""
+        return
+    fi
+
+    # Panel geometry
+    local px py pw ph
+    px=$($panel.x)
+    py=$($panel.y)
+    pw=$($panel.width)
+    ph=$($panel.height)
+
+    # Popup width based on longest key+label entry
+    local max_item=0
+    local i
+    for ((i=0; i<count; i++)); do
+        local len=$(( 1 + 2 + ${#__QUICKDIR_labels[i]} ))
+        [ $len -gt $max_item ] && max_item=$len
+    done
+    local title="Quick Dir"
+    [ ${#title} -gt $max_item ] && max_item=${#title}
+
+    local popup_w=$(( max_item + 6 ))
+    [ $popup_w -lt 24 ] && popup_w=24
+    local max_w=$(( pw - 2 ))
+    [ $popup_w -gt $max_w ] && popup_w=$max_w
+
+    local popup_h=$(( count + 2 ))
+
+    # Center within the panel
+    local popup_r=$(( py + (ph - popup_h) / 2 ))
+    local popup_c=$(( px + (pw - popup_w) / 2 ))
+    [ $popup_r -lt $py ] && popup_r=$py
+
+    local inner_w=$(( popup_w - 4 ))
+
+    tui.cursor.hide
+
+    # Shadow
+    tui.color.bg_black
+    for ((i=popup_r+1; i<=popup_r+popup_h; i++)); do
+        tui.cursor.move $i $((popup_c + 2))
+        printf "%${popup_w}s" ""
+    done
+    tui.color.reset
+
+    # Background
+    tui.color.bg_white; tui.color.black
+    for ((i=popup_r; i<popup_r+popup_h; i++)); do
+        tui.cursor.move $i $popup_c
+        printf "%${popup_w}s" ""
+    done
+
+    # Border with title
+    tui.color.bg_white; tui.color.black
+    tui.box.titled $popup_r $popup_c $popup_w $popup_h "$title"
+
+    local selected=0
+    quickdir._draw_rows $popup_r $popup_c $popup_w $inner_w $selected
+
+    while true; do
+        local key
+        key=$(tui.input.key 2>&1) || continue
+
+        case "$key" in
+            UP)
+                selected=$(( (selected - 1 + count) % count ))
+                ;;
+            DOWN)
+                selected=$(( (selected + 1) % count ))
+                ;;
+            ENTER)
+                __QUICKDIR_result="${__QUICKDIR_paths[selected]}"
+                return
+                ;;
+            ESC)
+                __QUICKDIR_result=""
+                return
+                ;;
+            *)
+                for ((i=0; i<count; i++)); do
+                    if [ "${__QUICKDIR_keys[i]}" = "$key" ]; then
+                        __QUICKDIR_result="${__QUICKDIR_paths[i]}"
+                        return
+                    fi
+                done
+                ;;
+        esac
+
+        quickdir._draw_rows $popup_r $popup_c $popup_w $inner_w $selected
+    done
+}

@@ -180,7 +180,9 @@ __PANEL__.render_row_string(){
     fi
 
     # Name column
-    if [ $is_cursor -eq 1 ]; then
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
         row+="$_PC_BLACK"
     elif [ $is_marked_file -eq 1 ]; then
         row+="$_PC_YELLOW$_PC_BOLD"
@@ -202,8 +204,12 @@ __PANEL__.render_row_string(){
     row+="│"
 
     # Size column
-    if [ $is_cursor -eq 1 ]; then
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
         row+="$_PC_BLACK"
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_YELLOW$_PC_BOLD"
     elif [ "$item_type" = "d" ]; then
         row+="$_PC_WHITE$_PC_BOLD"
     else
@@ -221,8 +227,12 @@ __PANEL__.render_row_string(){
     row+="│"
 
     # Time column
-    if [ $is_cursor -eq 1 ]; then
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
         row+="$_PC_BLACK"
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_YELLOW$_PC_BOLD"
     elif [ "$item_type" = "d" ]; then
         row+="$_PC_WHITE$_PC_BOLD"
     else
@@ -291,6 +301,13 @@ __PANEL__._publish_dir(){
 }
 
 # Handle incoming broker messages
+__PANEL__.register(){
+    local broker="$1"
+    $broker.subscribe "dialog_closed" "__PANEL__"
+    $broker.subscribe "viewer_closed" "__PANEL__"
+    $broker.subscribe "editor_closed" "__PANEL__"
+}
+
 __PANEL__.process_message(){
     local topic="$1"
     case "$topic" in
@@ -828,6 +845,19 @@ __PANEL__.get_selected_item(){
     echo "$filename|$filetype|$path"
 }
 
+# Navigate panel to an arbitrary directory path
+__PANEL__.goto(){
+    local new_path="$1"
+    [ -d "$new_path" ] || return
+    local list=$(__PANEL__.list_source)
+    $list.path = "$new_path"
+    cd "$new_path" 2>/dev/null || true
+    $list.load
+    __PANEL__.prerender_all_rows
+    __PANEL__.render
+    __PANEL__._publish_dir
+}
+
 # Reload panel's filelist from disk (re-scans current directory to pick up changes)
 __PANEL__.reload(){
     local list=$(__PANEL__.list_source)
@@ -899,6 +929,7 @@ __PANEL__._enter_archive(){
 
     # Pre-render
     __PANEL__.prerender_all_rows || return 1
+    __PANEL__._publish_dir
 }
 
 # Exit archive view mode
@@ -946,6 +977,7 @@ __PANEL__._exit_archive(){
 
     # Pre-render
     __PANEL__.prerender_all_rows
+    __PANEL__._publish_dir
 }
 
 # Handle ENTER key - navigate into directory or set result for file opening

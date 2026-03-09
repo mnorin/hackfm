@@ -2,6 +2,6 @@
 # editor.h - Constructor for editor
 
 editor(){
-    local class_code=$(<"$HACKFM_DIR/editor.class")
+    local class_code=$(<"$HACKFM_DIR/modules/editor/editor.class")
     . <(printf '%s' "${class_code//__EDITOR__/$1}")
 }

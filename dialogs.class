@@ -11,121 +11,99 @@ show_path_input() {
     local title="$1"
     local message="$2"
     local default="$3"
-    
-    CUSTOM_INPUT_RESULT="$default"
-    
+
     # Calculate dialog width based on path length
-    local dialog_width=$((${#default} + 8))
+    local dialog_width=$(( ${#default} + 8 ))
     [ $dialog_width -lt 60 ] && dialog_width=60
     [ $dialog_width -gt 100 ] && dialog_width=100
-    
+
     local dialog_height=7
-    
-    # Get terminal size
-    local size=$(tui.screen.size)
+
+    local size
+    size=$(tui.screen.size)
     local rows=${size% *}
     local cols=${size#* }
     local dialog_row=$(( (rows - dialog_height) / 2 ))
     local dialog_col=$(( (cols - dialog_width) / 2 ))
-    
-    # Draw shadow
+
+    # Shadow
     tui.color.bg_black
+    local r
     for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
         tui.cursor.move $r $((dialog_col + 2))
         printf "%$((dialog_width))s" ""
     done
     tui.color.reset
-    
-    # Draw dialog box
-    tui.color.bg_white
-    tui.color.black
+
+    # Background + border
+    tui.color.bg_white; tui.color.black
     for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
         tui.cursor.move $r $dialog_col
         printf "%${dialog_width}s" ""
     done
-    
-    # Draw border
     tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
-    
-    # Draw title
+
+    # Title
     tui.cursor.move $dialog_row $((dialog_col + 2))
-    tui.color.bg_white
-    tui.color.black
-    tui.color.bold
+    tui.color.bg_white; tui.color.black; tui.color.bold
     printf " %s " "$title"
     tui.color.reset
-    
-    # Draw message
+
+    # Message
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
-    tui.color.bg_white
-    tui.color.black
+    tui.color.bg_white; tui.color.black
     printf "%-$((dialog_width - 4))s" "$message"
-    
-    # Input field
-    local input="$CUSTOM_INPUT_RESULT"
+
+    local input="$default"
     local cursor_pos=${#input}
-    local input_width=$((dialog_width - 4))
-    
-    # Show cursor for input
+    local input_width=$(( dialog_width - 4 ))
+
     tui.cursor.show
-    
+
     while true; do
-        # Draw input field
         tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2))
-        tui.color.bg_cyan
-        tui.color.black
-        
-        # Show scrollable portion of input
+        tui.color.bg_cyan; tui.color.black
+
         local display_start=0
-        if [ $cursor_pos -ge $input_width ]; then
-            display_start=$((cursor_pos - input_width + 1))
-        fi
+        [ $cursor_pos -ge $input_width ] && display_start=$(( cursor_pos - input_width + 1 ))
         local display_input="${input:$display_start:$input_width}"
         printf "%-${input_width}s" "$display_input"
-        
-        # Position cursor
-        local cursor_col=$((cursor_pos - display_start))
+
+        local cursor_col=$(( cursor_pos - display_start ))
         tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2 + cursor_col))
-        
-        # Read key
-        local key=$(tui.input.key)
-        
+
+        local key
+        key=$(tui.input.key 2>&1) || true
+
         case "$key" in
             ENTER)
-                CUSTOM_INPUT_RESULT="$input"
-                return 0
+                tui.cursor.hide
+                file_dialog.input_value = "$input"
+                file_dialog.result = 0
+                return
                 ;;
             ESC)
-                return 1
+                tui.cursor.hide
+                file_dialog.result = 1
+                return
                 ;;
             BACKSPACE)
                 if [ $cursor_pos -gt 0 ]; then
                     input="${input:0:$((cursor_pos-1))}${input:$cursor_pos}"
-                    cursor_pos=$((cursor_pos - 1))
+                    cursor_pos=$(( cursor_pos - 1 ))
                 fi
                 ;;
             DELETE)
-                if [ $cursor_pos -lt ${#input} ]; then
-                    input="${input:0:$cursor_pos}${input:$((cursor_pos+1))}"
-                fi
+                [ $cursor_pos -lt ${#input} ] && input="${input:0:$cursor_pos}${input:$((cursor_pos+1))}"
                 ;;
-            LEFT)
-                [ $cursor_pos -gt 0 ] && cursor_pos=$((cursor_pos - 1))
-                ;;
-            RIGHT)
-                [ $cursor_pos -lt ${#input} ] && cursor_pos=$((cursor_pos + 1))
-                ;;
-            HOME)
-                cursor_pos=0
-                ;;
-            END)
-                cursor_pos=${#input}
-                ;;
+            LEFT)  [ $cursor_pos -gt 0 ] && cursor_pos=$(( cursor_pos - 1 )) ;;
+            RIGHT) [ $cursor_pos -lt ${#input} ] && cursor_pos=$(( cursor_pos + 1 )) ;;
+            HOME)  cursor_pos=0 ;;
+            END)   cursor_pos=${#input} ;;
             *)
-                # Regular character input
                 if [[ ${#key} -eq 1 && "$key" =~ [[:print:]] ]]; then
                     input="${input:0:$cursor_pos}${key}${input:$cursor_pos}"
-                    cursor_pos=$((cursor_pos + 1))
+                    cursor_pos=$(( cursor_pos + 1 ))
                 fi
                 ;;
         esac

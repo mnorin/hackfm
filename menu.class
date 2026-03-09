@@ -210,6 +210,9 @@ __MENU__.show(){
     # Clear selected handler
     __MENU__.selected = ""
     
+    # Hide cursor while navigating menu
+    tui.cursor.hide
+
     # Draw menu bar with first menu selected
     __MENU__.draw_bar $current_menu
     
