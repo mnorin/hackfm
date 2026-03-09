@@ -182,7 +182,7 @@ __APPFRAME__.clear_main(){
 }
 
 # Draw function key bar at bottom
-# Usage: appframe.draw_fkeys "Help" "" "View" "Edit" ...
+# Usage: appframe.draw_fkeys layer "Label1" "Label2" ... "Label12"
 __APPFRAME__.draw_fkeys(){
     # Create fkeybar instance if not already created
     local fkeybar_created=$(__APPFRAME__.fkeybar_created)

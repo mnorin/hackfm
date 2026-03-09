@@ -86,7 +86,9 @@ trap 'hackfm.cleanup; exit 0' INT TERM
 
 # Load components (from HackFM directory)
 . "$HACKFM_DIR/hackfmlib.h"
+
 . "$HACKFM_DIR/openhandler.class"
+
 . "$HACKFM_DIR/dialogs.class"
 
 # App state
@@ -122,6 +124,8 @@ declare -Ag __MODULE_KEY_LABELS=()
 declare -Ag __MODULE_KEY_LABEL_FUNCS=()
 declare -ag __FKEYBAR_LABELS=()
 __HACKFM_FKEY_LABEL=""
+__HACKFM_ACTIVE_LAYER=0
+__HACKFM_ACTIVE_LAYER=0
 
 hackfm.module.register_key() {
     local key="$1"
@@ -152,10 +156,11 @@ hackfm.module.register_key_label() {
 }
 
 hackfm.fkeybar_labels() {
-    local i
+    local i offset
+    offset=$(( __HACKFM_ACTIVE_LAYER * 10 ))
     __FKEYBAR_LABELS=()
     for ((i=1; i<=10; i++)); do
-        local key="F$i"
+        local key="F$(( i + offset ))"
         local label=""
         if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
             local cb
@@ -173,6 +178,37 @@ hackfm.fkeybar_labels() {
         fi
         __FKEYBAR_LABELS+=("$label")
     done
+}
+
+hackfm.fkeybar_layer_count() {
+    # Count populated layers (layers with at least one registered key)
+    local max_fkey=0
+    local key
+    for key in "${!__MODULE_KEYS[@]}"; do
+        if [[ "$key" =~ ^F([0-9]+)$ ]]; then
+            local n="${BASH_REMATCH[1]}"
+            [ "$n" -gt "$max_fkey" ] && max_fkey="$n"
+        fi
+    done
+    if [ "$max_fkey" -eq 0 ]; then
+        echo 1
+    else
+        echo $(( (max_fkey - 1) / 10 + 1 ))
+    fi
+}
+
+hackfm.fkeybar_layer_next() {
+    local total
+    total=$(hackfm.fkeybar_layer_count)
+    __HACKFM_ACTIVE_LAYER=$(( (__HACKFM_ACTIVE_LAYER + 1) % total ))
+    draw_main_frame
+}
+
+hackfm.fkeybar_layer_prev() {
+    local total
+    total=$(hackfm.fkeybar_layer_count)
+    __HACKFM_ACTIVE_LAYER=$(( (__HACKFM_ACTIVE_LAYER - 1 + total) % total ))
+    draw_main_frame
 }
 
 hackfm.module.add_menu_item() {
@@ -428,14 +464,14 @@ redraw_panels_for_dropdown() {
 draw_main_frame() {
     main_frame.draw_title
     hackfm.fkeybar_labels
-    main_frame.draw_fkeys "${__FKEYBAR_LABELS[@]}"
+    main_frame.draw_fkeys "$__HACKFM_ACTIVE_LAYER" "${__FKEYBAR_LABELS[@]}"
 }
 
 draw_screen() {
     tui.screen.alt
     tui.cursor.hide
     hackfm.fkeybar_labels
-    main_frame.draw_frame "${__FKEYBAR_LABELS[@]}"
+    main_frame.draw_frame "$__HACKFM_ACTIVE_LAYER" "${__FKEYBAR_LABELS[@]}"
     if [ $PANELS_VISIBLE -eq 1 ]; then
         left_panel.render
         right_panel.render
@@ -618,6 +654,8 @@ setup_menu() {
     # Register built-in F-key bindings
     hackfm.module.register_key "F9"  "show_menu"  "Menu"
     hackfm.module.register_key "F10" "hackfm.quit" "Quit"
+    hackfm.module.register_key "CTRL-LEFT"  "hackfm.fkeybar_layer_prev"
+    hackfm.module.register_key "CTRL-RIGHT" "hackfm.fkeybar_layer_next"
 }
 
 hackfm.quit() {
@@ -901,6 +939,11 @@ RCFILE
                 
             # Regular printable characters - type into command line
             *)
+                # Translate F1-F12 physical keys to logical keys based on active layer
+                if [[ "$key" =~ ^F([1-9])$ ]] && [ $__HACKFM_ACTIVE_LAYER -gt 0 ]; then
+                    local _fnum="${key#F}"
+                    key="F$(( _fnum + __HACKFM_ACTIVE_LAYER * 10 ))"
+                fi
                 # Check module-registered keys first (guard against keys with dots/invalid chars)
                 if [[ "$key" =~ ^[A-Za-z0-9_-]+$ ]] && [ -n "${__MODULE_KEYS[$key]+x}" ]; then
                     if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then

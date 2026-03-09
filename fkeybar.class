@@ -15,33 +15,35 @@ __FKEYBAR__.property(){
 __FKEYBAR__.row(){   __FKEYBAR__.property row   "$@"; }
 __FKEYBAR__.width(){ __FKEYBAR__.property width "$@"; }
 
-# Key labels array (set via render method)
-declare -ag __FKEYBAR___labels=()
-
 # Render function key bar
-# Usage: fkeybar.render "Help" "" "View" "Edit" "Copy" "Move" "Mkdir" "Delete" "" "Quit"
+# Usage: fkeybar.render layer "Label1" "Label2" ... "Label10"
 __FKEYBAR__.render(){
+    local layer="$1"
+    shift
     local row=$(__FKEYBAR__.row)
     local width=$(__FKEYBAR__.width)
-    
-    # Labels passed as arguments (F1-F10)
+
     local labels=("$@")
-    
-    # Ensure we have 10 labels
     while [ ${#labels[@]} -lt 10 ]; do
         labels+=("")
     done
-    
+
     tui.cursor.move $row 1
-    
-    # Calculate spacing
-    local key_width=$((width / 10))
-    
+
+    # Layer indicator: "L0" etc, white on black, 2 chars
+    tui.color.white
+    tui.color.bg_black
+    printf "L%s" "$layer"
+
+    # 10 fkey slots filling remaining width
+    local remaining=$(( width - 2 ))
+    local key_width=$(( remaining / 10 ))
+
     for i in {0..9}; do
-        local num=$((i + 1))
+        local num=$(( i + 1 ))
         local label="${labels[$i]}"
-        
-        # Print number: white on black with leading space
+
+        # Key number: white on black
         tui.color.white
         tui.color.bg_black
         if [ $num -lt 10 ]; then
@@ -49,12 +51,12 @@ __FKEYBAR__.render(){
         else
             printf "%s" "$num"
         fi
-        
-        # Print label: black on cyan
+
+        # Label: black on cyan
         tui.color.black
         tui.color.bg_cyan
-        printf "%-$((key_width - 2))s" "$label"
+        printf "%-$(( key_width - 2 ))s" "$label"
     done
-    
+
     tui.color.reset
 }
