@@ -235,7 +235,7 @@ hackfm.cleanup() {
     main_frame.cleanup
 }
 
-hackfm.load_modules() {
+hackfm.load_modules.names() {
     local conf="$HACKFM_DIR/conf/hackfm.conf"
     [ -f "$conf" ] || return
     local line
@@ -246,20 +246,36 @@ hackfm.load_modules() {
             local name="${BASH_REMATCH[1]}"
             local module_script="$HACKFM_DIR/modules/$name/$name.mod"
             if [ -f "$module_script" ]; then
-                echo "$(date '+%H:%M:%S') load_modules: sourcing $name" >&2
-                . "$module_script"
-                if declare -f "${name}.init" > /dev/null 2>&1; then
-                    echo "$(date '+%H:%M:%S') load_modules: calling ${name}.init" >&2
-                    "${name}.init"
-                    echo "$(date '+%H:%M:%S') load_modules: ${name}.init done" >&2
-                else
-                    echo "$(date '+%H:%M:%S') load_modules: ${name}.init not found after sourcing" >&2
-                fi
+                echo "$name"
             else
                 echo "$(date '+%H:%M:%S') load_modules: script not found: $module_script" >&2
             fi
         fi
     done < "$conf"
+}
+
+hackfm.load_modules.pre_init() {
+    local name
+    while IFS= read -r name; do
+        echo "$(date '+%H:%M:%S') load_modules: sourcing $name" >&2
+        . "$HACKFM_DIR/modules/$name/$name.mod"
+        if declare -f "${name}.pre_init" > /dev/null 2>&1; then
+            echo "$(date '+%H:%M:%S') load_modules: calling ${name}.pre_init" >&2
+            "${name}.pre_init"
+            echo "$(date '+%H:%M:%S') load_modules: ${name}.pre_init done" >&2
+        fi
+    done < <(hackfm.load_modules.names)
+}
+
+hackfm.load_modules.init() {
+    local name
+    while IFS= read -r name; do
+        if declare -f "${name}.init" > /dev/null 2>&1; then
+            echo "$(date '+%H:%M:%S') load_modules: calling ${name}.init" >&2
+            "${name}.init"
+            echo "$(date '+%H:%M:%S') load_modules: ${name}.init done" >&2
+        fi
+    done < <(hackfm.load_modules.names)
 }
 
 
@@ -331,29 +347,32 @@ init() {
 
     # Switch to alternate screen for file manager
     tui.screen.alt
-    
+
+    # Pre-init modules — run before any objects are created so modules can override constructors
+    hackfm.load_modules.pre_init
+
     # Create appframe if needed
     if [ $APP_FRAME_CREATED -eq 0 ]; then
         appframe main_frame
         APP_FRAME_CREATED=1
     fi
-    
+
     # Configure
     main_frame.title = "HackFM - Hackable File Manager"
     main_frame.show_cursor = 0
-    
+
     # Setup
     main_frame.setup
-    
+
     # Get terminal size from appframe
     local rows=$(main_frame.rows)
     local cols=$(main_frame.cols)
     local main_height=$(main_frame.main_height)
-    
+
     local panel_width=$(( (cols - 3) / 2 ))
     # Panel height = main area height - 3 (border at top, border at bottom, and command line)
     local panel_height=$((main_height - 3))
-    
+
     # Create left panel with its own filelist
     panel left_panel
     left_panel.x = 1
@@ -426,8 +445,8 @@ init() {
     # Setup menu structure (must be before load_modules so modules can add items)
     setup_menu
 
-    # Load modules
-    hackfm.load_modules
+    # Init modules — register keys, menu items, subscriptions
+    hackfm.load_modules.init
 }
 
 # ============================================================================
