@@ -1,0 +1,145 @@
+# colorpanel.class - Overrides render_row_string with color-aware version.
+# Sourced after panel() constructor with __PANEL__ substituted,
+# so these definitions replace the originals for this instance only.
+
+__PANEL__.render_row_string(){
+    local file_idx=$1
+    local width=$(__PANEL__.width)
+    local active=$(__PANEL__.active)
+
+    local list=$(__PANEL__.list_source)
+    local selected=$($list.selected)
+
+    local filename item_type item_size item_time is_exec is_marked link_target
+    IFS='|' read -r filename item_type item_size item_time is_exec is_marked link_target <<< "$($list.get $file_idx)"
+
+    local time_col_width=17
+    local size_col_width=9
+    local name_col_width=$((width - time_col_width - size_col_width - 2))
+
+    # Prefix
+    local prefix=" "
+    if [ -n "$link_target" ]; then
+        prefix="~"
+    elif [ "$item_type" = "d" ]; then
+        prefix="/"
+    elif [ "$is_exec" = "1" ]; then
+        prefix="*"
+    fi
+
+    local display_name="$filename"
+    local max_filename_len=$((name_col_width - 1))
+    if [ ${#display_name} -gt $max_filename_len ]; then
+        display_name="${display_name:0:$((max_filename_len - 3))}..."
+    fi
+
+    local padding_needed=$((max_filename_len - ${#display_name}))
+    local padding=""
+    if [ $padding_needed -gt 0 ]; then
+        padding=$(printf '%*s' "$padding_needed" "")
+    fi
+
+    local is_cursor=0
+    local is_marked_file=0
+    if [ $file_idx -eq $selected ] && [ $active -eq 1 ]; then
+        is_cursor=1
+    fi
+    if [ "$is_marked" = "1" ]; then
+        is_marked_file=1
+    fi
+
+    # Resolve file color from __HACKFM_COLORS
+    # Cursor and marked states override file color — only look up for normal rows
+    local file_color=""
+    if [ $is_cursor -eq 0 ] && [ $is_marked_file -eq 0 ]; then
+        if [ "$is_exec" = "1" ]; then
+            file_color="${__HACKFM_COLORS[exe]:-$_PC_BRIGHT_GREEN}"
+        elif [ "$item_type" = "d" ]; then
+            file_color="${__HACKFM_COLORS[dir]:-$_PC_WHITE$_PC_BOLD}"
+        else
+            # Extension lookup — try compound extension first, then simple
+            local ext=""
+            local base="${filename##*/}"
+            # Strip leading dot for hidden files before extension check
+            local checkname="$base"
+            if [[ "$checkname" == .* ]]; then checkname="${checkname#.}"; fi
+            if [[ "$checkname" == *.*.* ]]; then
+                # Has compound extension — try last two parts
+                local compound="${checkname#*.}"
+                ext="${compound,,}"
+                file_color="${__HACKFM_COLORS[$ext]:-}"
+            fi
+            if [ -z "$file_color" ] && [[ "$checkname" == *.* ]]; then
+                ext="${checkname##*.}"
+                ext="${ext,,}"
+                file_color="${__HACKFM_COLORS[$ext]:-}"
+            fi
+            if [ -z "$file_color" ]; then file_color="$_PC_WHITE"; fi
+        fi
+    fi
+
+    local row=""
+
+    # Background
+    if [ $is_cursor -eq 1 ]; then
+        row+="$_PC_BG_CYAN"
+    else
+        row+="$_PC_BG_BLUE"
+    fi
+
+    # Name column color
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
+        row+="$_PC_BLACK"
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_YELLOW$_PC_BOLD"
+    else
+        row+="$file_color"
+    fi
+    row+="${prefix}${display_name}${padding}"
+
+    # First separator
+    if [ $is_cursor -eq 1 ]; then
+        row+="$_PC_BLACK"
+    else
+        row+="$_PC_REGULAR$_PC_WHITE"
+    fi
+    row+="│"
+
+    # Size column
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
+        row+="$_PC_BLACK"
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_YELLOW$_PC_BOLD"
+    else
+        row+="$_PC_WHITE"
+    fi
+    row+="$(printf "%${size_col_width}s" "$item_size")"
+
+    # Second separator
+    if [ $is_cursor -eq 1 ]; then
+        row+="$_PC_BLACK"
+    else
+        row+="$_PC_REGULAR$_PC_WHITE"
+    fi
+    row+="│"
+
+    # Time column
+    if [ $is_cursor -eq 1 ] && [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_BRIGHT_YELLOW$_PC_BOLD"
+    elif [ $is_cursor -eq 1 ]; then
+        row+="$_PC_BLACK"
+    elif [ $is_marked_file -eq 1 ]; then
+        row+="$_PC_YELLOW$_PC_BOLD"
+    else
+        row+="$_PC_WHITE"
+    fi
+    local display_time="${item_time:0:$time_col_width}"
+    row+="$(printf "%-${time_col_width}s" "$display_time")"
+    row+="$_PC_RESET"
+
+    echo "$row"
+}
