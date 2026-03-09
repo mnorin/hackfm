@@ -2,7 +2,11 @@
 # viewer.sh - Standalone file viewer wrapper
 # Usage: viewer.sh <filepath>
 
-HACKFM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HACKFM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+mkdir -p "$HACKFM_DIR/logs"
+exec 2>>"$HACKFM_DIR/logs/viewer.log"
+set -x
 
 . "$HACKFM_DIR/tui/cursor.class"
 . "$HACKFM_DIR/tui/screen.class"
@@ -11,7 +15,7 @@ HACKFM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HACKFM_DIR/tui/region.class"
 . "$HACKFM_DIR/tui/style.class"
 . "$HACKFM_DIR/appframe.h"
-. "$HACKFM_DIR/viewer.h"
+. "$HACKFM_DIR/modules/viewer/viewer.h"
 
 [ -z "$1" ] && exit 1
 [ ! -f "$1" ] && exit 1

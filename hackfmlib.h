@@ -1,6 +1,6 @@
 #!/bin/bash
 # hackfmlib.h - All constructors and class loaders for hackfm
-# Sourced once by hackfm.sh; subprocess scripts (viewer.sh, editor.sh)
+# Sourced once by hackfm.sh; subprocess scripts (modules/viewer/viewer.sh, modules/editor/editor.sh)
 # source their own .h files independently.
 
 appframe(){
@@ -62,11 +62,9 @@ panel(){
 }
 
 fileattr(){
-    local class_code=$(<"$HACKFM_DIR/fileattr.class")
+    local class_code=$(<"$HACKFM_DIR/modules/fsattr/fileattr.class")
     . <(printf '%s' "${class_code//__FILEATTR__/$1}")
 }
-
-. "$HACKFM_DIR/usermenu.class"
 
 commandline(){
     local class_code=$(<"$HACKFM_DIR/commandline.class")

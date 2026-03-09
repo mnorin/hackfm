@@ -353,7 +353,7 @@ __FILEATTR__.show(){
 
     while true; do
         local key
-        key=$(tui.input.key)
+        key=$(tui.input.key 2>&1) || true
 
         case "$key" in
             SPACE)

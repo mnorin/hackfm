@@ -1,9 +1,10 @@
 #!/bin/bash
-# hackfm.sh - Hackable File Manager using REAL ba.sh (REFACTORED)
+# hackfm.sh - Hackable File Manager
 
 # Get HackFM installation directory (for sourcing class files)
 export HACKFM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="$HACKFM_DIR/hackfm_errors.log"
+mkdir -p "$HACKFM_DIR/logs"
+LOG_FILE="$HACKFM_DIR/logs/hackfm.log"
 
 # Enable error logging
 exec 2>"$LOG_FILE"
@@ -12,14 +13,18 @@ set -E  # Inherit error traps
 # Error handler
 error_handler() {
     local line=$1
-    tui.cursor.style.default
-    tui.cursor.show
-    tui.screen.clear
-    tui.screen.main
+    declare -F tui.cursor.style.default &>/dev/null && tui.cursor.style.default
+    declare -F tui.cursor.show          &>/dev/null && tui.cursor.show
+    declare -F tui.screen.clear         &>/dev/null && tui.screen.clear
+    declare -F tui.screen.main          &>/dev/null && tui.screen.main
     [ -n "$ORIGINAL_STTY" ] && stty "$ORIGINAL_STTY" 2>/dev/null
-    echo "ERROR at line $line"
+    echo "ERROR at line $line in ${BASH_SOURCE[1]:-unknown}"
+    echo "Call stack:"
+    local i
+    for ((i=1; i<${#FUNCNAME[@]}; i++)); do
+        echo "  ${FUNCNAME[$i]} (${BASH_SOURCE[$i+1]:-?}:${BASH_LINENO[$i-1]})"
+    done
     echo "Check $LOG_FILE for details"
-    tail -20 "$LOG_FILE"
     exit 1
 }
 
@@ -68,6 +73,7 @@ resize_handler() {
 # Set up error and resize traps
 trap 'error_handler $LINENO' ERR
 trap 'resize_handler' WINCH
+trap 'hackfm.cleanup; exit 0' INT TERM
 
 # Load TUI (from shared tui directory)
 . "$HACKFM_DIR/tui/cursor.class"
@@ -80,38 +86,21 @@ trap 'resize_handler' WINCH
 
 # Load components (from HackFM directory)
 . "$HACKFM_DIR/hackfmlib.h"
-. "$HACKFM_DIR/viewhandler.class"
-. "$HACKFM_DIR/edithandler.class"
 . "$HACKFM_DIR/openhandler.class"
-. "$HACKFM_DIR/quickdir.class"
 . "$HACKFM_DIR/dialogs.class"
-. "$HACKFM_DIR/fs.class"
 
 # App state
 ACTIVE_PANEL=0
-PANELS_VISIBLE=1  # 1 = panels shown, 0 = panels hidden
-TERMINAL_MODE=0   # 0 = one-shot command, 1 = persistent terminal (via Ctrl+O)
-ORIGINAL_STTY=""  # Save original terminal settings
+PANELS_VISIBLE=1
+TERMINAL_MODE=0
+ORIGINAL_STTY=""
 
-# Panel and list arrays for cleaner code
 PANELS=("left_panel" "right_panel")
-
-# Main appframe
 APP_FRAME_CREATED=0
-
-# Command line state
 CMDLINE_CREATED=0
 TEXTVIEW_CREATED=0
-
-# Message broker
 BROKER_CREATED=0
-
-# Menu state
 MENU_CREATED=0
-
-# ============================================================================
-# HELPER FUNCTIONS (NEW - to eliminate duplication)
-# ============================================================================
 
 # Read a value from hackfm.conf
 # Usage: conf_get KEY [DEFAULT]
@@ -127,8 +116,117 @@ conf_get() {
     echo "$default"
 }
 
-# Get the currently active panel's list object name
-# Get the currently active panel object name
+# MODULE API
+declare -Ag __MODULE_KEYS=()
+declare -Ag __MODULE_KEY_LABELS=()
+declare -Ag __MODULE_KEY_LABEL_FUNCS=()
+declare -ag __FKEYBAR_LABELS=()
+__HACKFM_FKEY_LABEL=""
+
+hackfm.module.register_key() {
+    local key="$1"
+    local func="$2"
+    local label="${3:-}"
+    if [ -n "${__MODULE_KEYS[$key]+x}" ]; then
+        __MODULE_KEYS[$key]="${__MODULE_KEYS[$key]} $func"
+    else
+        __MODULE_KEYS[$key]="$func"
+    fi
+    if [ -n "$label" ]; then
+        __MODULE_KEY_LABELS[$key]="$label"
+    fi
+}
+
+# Register a dynamic label function for a key.
+# The function sets __HACKFM_FKEY_LABEL to a non-empty string if it wants to claim the label,
+# or leaves it empty to pass to the next registered function.
+# Usage: hackfm.module.register_key_label KEY FUNC
+hackfm.module.register_key_label() {
+    local key="$1"
+    local func="$2"
+    if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
+        __MODULE_KEY_LABEL_FUNCS[$key]="${__MODULE_KEY_LABEL_FUNCS[$key]} $func"
+    else
+        __MODULE_KEY_LABEL_FUNCS[$key]="$func"
+    fi
+}
+
+hackfm.fkeybar_labels() {
+    local i
+    __FKEYBAR_LABELS=()
+    for ((i=1; i<=10; i++)); do
+        local key="F$i"
+        local label=""
+        if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
+            local cb
+            for cb in ${__MODULE_KEY_LABEL_FUNCS[$key]}; do
+                __HACKFM_FKEY_LABEL=""
+                $cb
+                if [ -n "$__HACKFM_FKEY_LABEL" ]; then
+                    label="$__HACKFM_FKEY_LABEL"
+                    break
+                fi
+            done
+        fi
+        if [ -z "$label" ]; then
+            label="${__MODULE_KEY_LABELS[$key]:-}"
+        fi
+        __FKEYBAR_LABELS+=("$label")
+    done
+}
+
+hackfm.module.add_menu_item() {
+    local menu="$1"
+    local label="$2"
+    local hotkey="$3"
+    local func="$4"
+    main_menu.add_subitem "$menu" "$label" "$hotkey" "$func"
+}
+
+hackfm.module.subscribe() {
+    local topic="$1"
+    local handler="$2"
+    broker.subscribe "$topic" "$handler"
+}
+
+# Load all enabled modules from hackfm.conf (module_NAME_enabled=1)
+hackfm.cleanup() {
+    trap - ERR WINCH INT TERM
+    tui.cursor.style.default
+    tui.cursor.show
+    tui.screen.main
+    [ -n "$ORIGINAL_STTY" ] && stty "$ORIGINAL_STTY" 2>/dev/null
+    main_frame.cleanup
+}
+
+hackfm.load_modules() {
+    local conf="$HACKFM_DIR/conf/hackfm.conf"
+    [ -f "$conf" ] || return
+    local line
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*$  ]] && continue
+        [[ "$line" =~ ^[[:space:]]*\# ]] && continue
+        if [[ "$line" =~ ^module_([a-zA-Z0-9_]+)_enabled=1$ ]]; then
+            local name="${BASH_REMATCH[1]}"
+            local module_script="$HACKFM_DIR/modules/$name/$name.mod"
+            if [ -f "$module_script" ]; then
+                echo "$(date '+%H:%M:%S') load_modules: sourcing $name" >&2
+                . "$module_script"
+                if declare -f "${name}.init" > /dev/null 2>&1; then
+                    echo "$(date '+%H:%M:%S') load_modules: calling ${name}.init" >&2
+                    "${name}.init"
+                    echo "$(date '+%H:%M:%S') load_modules: ${name}.init done" >&2
+                else
+                    echo "$(date '+%H:%M:%S') load_modules: ${name}.init not found after sourcing" >&2
+                fi
+            else
+                echo "$(date '+%H:%M:%S') load_modules: script not found: $module_script" >&2
+            fi
+        fi
+    done < "$conf"
+}
+
+
 get_active_panel() {
     echo "${PANELS[$ACTIVE_PANEL]}"
 }
@@ -147,15 +245,6 @@ get_selected_item() {
     $panel.get_selected_item
 }
 
-# Get selected item info from specific panel (0=left, 1=right)
-# Returns: filename|filetype|path (pipe-separated)
-
-# Check if selected item is special (.. or <empty>)
-# Returns: 0 if special, 1 if normal
-
-# Cleanup after dialog (resets colors and hides cursor)
-
-# Reload the active panel's directory
 reload_active_panel() {
     local panel=$(get_active_panel)
     $panel.reload
@@ -172,18 +261,7 @@ reload_both_panels() {
     right_panel.reload
 }
 
-# Reload panel by index (0=left, 1=right)
-
-# Quick search - find next file starting with search text
-# Show error dialog and redraw screen
-# Custom input dialog with dynamic width for long paths
-# Returns 0 on OK, 1 on Cancel
-# Result in CUSTOM_INPUT_RESULT variable
-CUSTOM_INPUT_RESULT=""
-
-
-
-# Terminal lifecycle handlers - called by broker on ui.terminal_enter/exit
+# Terminal lifecycle handlers
 handle_terminal_enter() {
     tui.screen.main
     tui.cursor.show
@@ -302,12 +380,18 @@ init() {
     broker.subscribe "ui.terminal_exit" "handle_terminal_exit"
 
     # Subscribe draw_main_frame to topics that require full redraw
-    broker.subscribe "viewer_closed" "draw_main_frame"
-    broker.subscribe "editor_closed" "draw_main_frame"
+    broker.subscribe "viewer_closed"          "draw_main_frame"
+    broker.subscribe "editor_closed"          "draw_main_frame"
 
     # Wire dialog to panels for status messages
     left_panel.dialog = file_dialog
     right_panel.dialog = file_dialog
+
+    # Setup menu structure (must be before load_modules so modules can add items)
+    setup_menu
+
+    # Load modules
+    hackfm.load_modules
 }
 
 # ============================================================================
@@ -343,30 +427,20 @@ redraw_panels_for_dropdown() {
 # Draw screen
 draw_main_frame() {
     main_frame.draw_title
-    main_frame.draw_fkeys "Help" "UserMenu" "View" "Edit" "Copy" "Move" "Mkdir" "Delete" "Menu" "Quit"
+    hackfm.fkeybar_labels
+    main_frame.draw_fkeys "${__FKEYBAR_LABELS[@]}"
 }
 
 draw_screen() {
-    # Ensure we're on alternate screen
     tui.screen.alt
-    
-    # Hide cursor while drawing
     tui.cursor.hide
-    
-    # Draw frame (title + fkeys, no fill)
-    main_frame.draw_frame "Help" "UserMenu" "View" "Edit" "Copy" "Move" "Mkdir" "Delete" "Menu" "Quit"
-    
-    # Draw panels or output in main area
+    hackfm.fkeybar_labels
+    main_frame.draw_frame "${__FKEYBAR_LABELS[@]}"
     if [ $PANELS_VISIBLE -eq 1 ]; then
-        # Panels visible - show file browser
         left_panel.render
         right_panel.render
     fi
-    
-    # Draw command line
     draw_command_line
-    
-    # Position cursor at end of command line and show it
     local cmd_text=$(cmd.text)
     local cmd_row=$(cmd.row)
     local cmd_prompt=$(cmd.prompt)
@@ -460,14 +534,12 @@ execute_command() {
 
 # Switch panels
 switch_panel() {
-    # Toggle active panel
     local old_panel=$(get_active_panel)
     ACTIVE_PANEL=$((1 - ACTIVE_PANEL))
     local new_panel=$(get_active_panel)
-    
-    # Update active states
     $old_panel.active = 0
     $new_panel.active = 1
+    draw_main_frame
 }
 
 # Navigate
@@ -483,26 +555,19 @@ open_item() {
     $panel.enter
     local action=$($panel.enter_result)
 
-    # Panel handles directory navigation, archive browsing, and ext.conf lookup
-    # We only handle file open actions here
-
     if [[ "$action" == open:* ]] || [[ "$action" == execute:* ]]; then
         local filepath="${action#*:}"
         openhandler.open "$filepath"
     fi
-    # action="" or "ok" - nothing to do
+    draw_main_frame
 }
 
 # ============================================================================
-# MENU FUNCTIONS
-# ============================================================================
-
-# ============================================================================
-# MENU HANDLERS
+# MENU
 # ============================================================================
 
 # Sort handlers for left panel
-# Sort panel by field - toggles between asc/desc. Args: panel asc_val desc_val
+# Sort panel by field - toggles between asc/desc. Args: panel field_asc field_desc
 _sort_panel() {
     local panel="$1" asc="$2" desc="$3"
     local current=$($panel.list.sort_order)
@@ -520,177 +585,69 @@ handler_sort_right_date() { _sort_panel right_panel date_desc date_asc;  }
 handler_sort_right_size() { _sort_panel right_panel size_desc size_asc;  }
 handler_sort_right_ext()  { _sort_panel right_panel ext_asc   ext_desc;  }
 
-# ============================================================================
-# MENU
-# ============================================================================
+setup_menu() {
+    menu main_menu
+    MENU_CREATED=1
 
-# Initialize and show menu
-show_menu() {
-    # Create menu if not already created
-    if [ $MENU_CREATED -eq 0 ]; then
-        menu main_menu
-        MENU_CREATED=1
-        
-        # Set background redraw callback
-        main_menu.background_redraw = "redraw_panels_for_dropdown"
-        
-        # Setup menu structure
-        main_menu.clear
-        
-        # Left panel menu
-        main_menu.add_item "Left"
-        main_menu.add_subitem "Left" "Sort by Name" "" "handler_sort_left_name"
-        main_menu.add_subitem "Left" "Sort by Time" "" "handler_sort_left_date"
-        main_menu.add_subitem "Left" "Sort by Size" "" "handler_sort_left_size"
-        main_menu.add_subitem "Left" "Sort by Extension" "" "handler_sort_left_ext"
-        
-        # File menu
-        main_menu.add_item "File"
-        main_menu.add_subitem "File" "View"       "F3"     "view_file"
-        main_menu.add_subitem "File" "Edit"       "F4"     "edit_file"
-        main_menu.add_subitem "File" "Attributes" "Ctrl-A" "show_attributes"
-        main_menu.add_subitem "File" "Copy"       "F5"     "copy_file"
-        main_menu.add_subitem "File" "Move"       "F6"     "move_file"
-        main_menu.add_subitem "File" "MkDir"      "F7"     "make_directory"
-        main_menu.add_subitem "File" "Delete"     "F8"     "delete_file"
-        
-        # Command menu
-        main_menu.add_item "Command"
-        # Add command items later
-        
-        # Options menu
-        main_menu.add_item "Options"
-        # Add options items later
-        
-        # Right panel menu
-        main_menu.add_item "Right"
-        main_menu.add_subitem "Right" "Sort by Name" "" "handler_sort_right_name"
-        main_menu.add_subitem "Right" "Sort by Time" "" "handler_sort_right_date"
-        main_menu.add_subitem "Right" "Sort by Size" "" "handler_sort_right_size"
-        main_menu.add_subitem "Right" "Sort by Extension" "" "handler_sort_right_ext"
-    fi
-    
-    # Show menu
-    main_menu.show
-    
-    # Get selected handler
-    local handler=$(main_menu.selected)
-    
-    # Call handler if one was selected (not ESC)
-    if [ -n "$handler" ]; then
-        # Check if handler function exists
-        if declare -F "$handler" &>/dev/null; then
-            $handler
-        else
-            echo "Warning: Handler '$handler' not found" >&2
-        fi
-    fi
-    
-    # Restore title bar only - dropdown area was already cleaned up by background_redraw
-    # inside the menu loop before it returned
-    main_frame.draw_title
-    broker.publish "ui.menu_closed" ""
+    main_menu.background_redraw = "redraw_panels_for_dropdown"
+    main_menu.clear
+
+    # Left panel menu
+    main_menu.add_item "Left"
+    main_menu.add_subitem "Left" "Sort by Name" "" "handler_sort_left_name"
+    main_menu.add_subitem "Left" "Sort by Time" "" "handler_sort_left_date"
+    main_menu.add_subitem "Left" "Sort by Size" "" "handler_sort_left_size"
+    main_menu.add_subitem "Left" "Sort by Extension" "" "handler_sort_left_ext"
+
+    # File menu
+    main_menu.add_item "File"
+
+    # Command menu
+    main_menu.add_item "Command"
+
+    # Options menu
+    main_menu.add_item "Options"
+
+    # Right panel menu
+    main_menu.add_item "Right"
+    main_menu.add_subitem "Right" "Sort by Name" "" "handler_sort_right_name"
+    main_menu.add_subitem "Right" "Sort by Time" "" "handler_sort_right_date"
+    main_menu.add_subitem "Right" "Sort by Size" "" "handler_sort_right_size"
+    main_menu.add_subitem "Right" "Sort by Extension" "" "handler_sort_right_ext"
+
+    # Register built-in F-key bindings
+    hackfm.module.register_key "F9"  "show_menu"  "Menu"
+    hackfm.module.register_key "F10" "hackfm.quit" "Quit"
 }
 
-# ============================================================================
-# FILE OPERATIONS
-# ============================================================================
-
-# View file (F3)
-view_file() {
-    tui.color.reset
-
-    local active_panel=$(get_active_panel)
-    local in_archive=$($active_panel.in_archive)
-
-    if [ "$in_archive" = "1" ]; then
-        local arch_list=$($active_panel.list_source)
-        local arch_filename arch_filetype arch_path
-        IFS='|' read -r arch_filename arch_filetype arch_path <<< "$($arch_list.get_selected_item)"
-
-        if [ "$arch_filetype" != "f" ] || [ "$arch_filename" = "<empty>" ] || [ "$arch_filename" = ".." ]; then
-            return
-        fi
-
-        viewhandler.open_archive "$arch_list" "$arch_path" "$arch_filename"
-    else
-        local filename filetype path
-        IFS='|' read -r filename filetype path <<< "$(get_selected_item)"
-
-        if [ "$filetype" != "f" ] || [ "$filename" = "<empty>" ]; then
-            return
-        fi
-
-        local filepath="$path/$filename"
-        if [ ! -f "$filepath" ] || [ ! -r "$filepath" ]; then
-            return
-        fi
-
-        viewhandler.open "$filepath"
-    fi
-
-    broker.publish "viewer_closed" ""
-}
-# Quick directory jump (Ctrl-D)
-show_quickdir() {
-    local active_panel
-    active_panel=$(get_active_panel)
-
-    quickdir.show "$active_panel"
-
-    if [ -n "$__QUICKDIR_result" ]; then
-        $active_panel.goto "$__QUICKDIR_result"
-    else
-        $active_panel.render
-    fi
-}
-
-# Show file attributes dialog (Ctrl-A)
-show_attributes() {
-    local filename filetype path
-    IFS='|' read -r filename filetype path <<< "$(get_selected_item)"
-
-    if [ "$filename" = "<empty>" ] || [ "$filename" = ".." ]; then
-        return
-    fi
-
-    local filepath="$path/$filename"
-
-    fileattr fa
-    fa.show "$filepath"
-    local result
-    result=$(fa.result)
-    fa.destroy
-
-    if [ "$result" = "0" ]; then
-        # Attributes changed — reload the active panel so file list reflects new mode
-        local active_panel
-        active_panel=$(get_active_panel)
-        $active_panel.reload
+hackfm.quit() {
+    file_dialog.show_confirm "Quit" "Do you want to quit HackFM?"
+    dialog_cleanup
+    if [ "$(file_dialog.result)" = "0" ]; then
+        hackfm.cleanup
+        exit 0
     fi
     broker.publish "dialog_closed" ""
 }
 
-edit_file() {
-    tui.color.reset
+show_menu() {
+    main_menu.show
 
-    local filename filetype path
-    IFS='|' read -r filename filetype path <<< "$(get_selected_item)"
+    local handler
+    handler=$(main_menu.selected)
 
-    if [ "$filetype" = "d" ] || [ "$filename" = "<empty>" ] || [ "$filename" = ".." ]; then
-        return
+    if [ -n "$handler" ]; then
+        if declare -F "$handler" &>/dev/null; then
+            $handler
+        fi
     fi
 
-    local filepath="$path/$filename"
-
-    edithandler.open "$filepath"
-
-    broker.publish "editor_closed" ""
+    main_frame.draw_title
+    broker.publish "ui.menu_closed" ""
 }
 
-# Make directory (F7)
-# MAIN LOOP
-# ============================================================================
+# View file (F3)
+
 
 # Main loop
 main_loop() {
@@ -861,20 +818,6 @@ main_loop() {
                 ;;
 
             # Ctrl+D - Quick directory jump
-            CTRL-D)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    show_quickdir
-                fi
-                ;;
-
-            # Ctrl+A - File attributes
-            CTRL-A)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    show_attributes
-                fi
-                ;;
-                
-            # Ctrl+O - toggle between File Manager and Terminal output
             # Ctrl+O - toggle between File Manager and Terminal view
             CTRL-O)
                 PANELS_VISIBLE=$((1 - PANELS_VISIBLE))
@@ -932,50 +875,7 @@ RCFILE
                 ;;
                 
             # Function keys - only work in panel mode with empty command line
-            F2)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    local _um_filename _um_filetype _um_path
-                    IFS='|' read -r _um_filename _um_filetype _um_path <<< "$(get_selected_item)"
-                    usermenu.show "$_um_path/$_um_filename"
-                    broker.publish "dialog_closed" ""
-                fi
-                ;;
-            F3)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    view_file
-                fi
-                ;;
-            F4)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    edit_file
-                fi
-                ;;
-            F5)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    active_panel=$(get_active_panel)
-                    in_archive=$($active_panel.in_archive)
-                    if [ "$in_archive" = "1" ]; then
-                        extract_item
-                    else
-                        copy_item
-                    fi
-                fi
-                ;;
-            F6)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    move_item
-                fi
-                ;;
-            F7)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    make_directory
-                fi
-                ;;
-            F8)
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                    delete_item
-                fi
-                ;;
+
             CTRL-SLASH)
                 # Insert filename under cursor into command line
                 local active=$(get_active_panel)
@@ -988,26 +888,9 @@ RCFILE
                     draw_command_line
                 fi
                 ;;
-            F9)
-                # Open menu
-                show_menu
-                ;;
-            F10)
-                # Ask for confirmation before quitting
-                local confirm_result=0
-                file_dialog.show_confirm "Quit" "Do you want to quit HackFM?" || confirm_result=$?
-                dialog_cleanup
-                
-                if [ $confirm_result -eq 0 ]; then
-                    # User confirmed - quit
-                    break
-                fi
-                # User cancelled - redraw and continue
-                broker.publish "dialog_closed" ""
-                ;;
-            
+
             # Other keys - pass to command line or default handling
-                
+
             # ESC - clear command line
             ESC)
                 if [ $PANELS_VISIBLE -eq 1 ]; then
@@ -1018,7 +901,15 @@ RCFILE
                 
             # Regular printable characters - type into command line
             *)
-                if [ ${#key} -eq 1 ] && [[ $key != $'\x1b' ]] && [[ $key != $'\x00' ]]; then
+                # Check module-registered keys first (guard against keys with dots/invalid chars)
+                if [[ "$key" =~ ^[A-Za-z0-9_-]+$ ]] && [ -n "${__MODULE_KEYS[$key]+x}" ]; then
+                    if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
+                        local _handler
+                        for _handler in ${__MODULE_KEYS[$key]}; do
+                            if $_handler; then break; fi
+                        done
+                    fi
+                elif [ ${#key} -eq 1 ] && [[ $key != $'\x1b' ]] && [[ $key != $'\x00' ]]; then
                     cmd.insert "$key"
                     draw_command_line
                 fi
@@ -1051,11 +942,4 @@ RCFILE
 # Main
 init
 main_loop
-
-# Cleanup
-trap - ERR WINCH
-tui.cursor.style.default
-tui.cursor.show
-tui.screen.main
-[ -n "$ORIGINAL_STTY" ] && stty "$ORIGINAL_STTY" 2>/dev/null
-main_frame.cleanup
+hackfm.cleanup

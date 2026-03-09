@@ -929,6 +929,7 @@ __PANEL__._enter_archive(){
 
     # Pre-render
     __PANEL__.prerender_all_rows || return 1
+    __PANEL__._publish_dir
 }
 
 # Exit archive view mode
@@ -976,6 +977,7 @@ __PANEL__._exit_archive(){
 
     # Pre-render
     __PANEL__.prerender_all_rows
+    __PANEL__._publish_dir
 }
 
 # Handle ENTER key - navigate into directory or set result for file opening

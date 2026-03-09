@@ -7,9 +7,9 @@
 #   "key" "/path/to/dir" "Label"
 # Paths may contain environment variables ($HOME, $USER) and tilde (~).
 
-declare -a __QUICKDIR_keys=()
-declare -a __QUICKDIR_paths=()
-declare -a __QUICKDIR_labels=()
+declare -ag __QUICKDIR_keys=() 2>/dev/null || true
+declare -ag __QUICKDIR_paths=() 2>/dev/null || true
+declare -ag __QUICKDIR_labels=() 2>/dev/null || true
 __QUICKDIR_result=""
 
 # ============================================================================
