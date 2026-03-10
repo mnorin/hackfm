@@ -1,0 +1,54 @@
+#!/bin/bash
+# modules.class - Module lifecycle management
+
+modules.names() {
+    local conf="$HACKFM_DIR/conf/hackfm.conf"
+    [ -f "$conf" ] || return
+    local line
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*$  ]] && continue
+        [[ "$line" =~ ^[[:space:]]*\# ]] && continue
+        if [[ "$line" =~ ^module_([a-zA-Z0-9_]+)_enabled=1$ ]]; then
+            local name="${BASH_REMATCH[1]}"
+            local module_script="$HACKFM_DIR/modules/$name/$name.mod"
+            if [ -f "$module_script" ]; then
+                echo "$name"
+            else
+                echo "$(date '+%H:%M:%S') modules: script not found: $module_script" >&2
+            fi
+        fi
+    done < "$conf"
+}
+
+modules.pre_init() {
+    local name
+    while IFS= read -r name; do
+        echo "$(date '+%H:%M:%S') modules: sourcing $name" >&2
+        . "$HACKFM_DIR/modules/$name/$name.mod"
+        if declare -f "${name}.pre_init" > /dev/null 2>&1; then
+            echo "$(date '+%H:%M:%S') modules: calling ${name}.pre_init" >&2
+            "${name}.pre_init"
+            echo "$(date '+%H:%M:%S') modules: ${name}.pre_init done" >&2
+        fi
+    done < <(modules.names)
+}
+
+modules.init() {
+    local name
+    while IFS= read -r name; do
+        if declare -f "${name}.init" > /dev/null 2>&1; then
+            echo "$(date '+%H:%M:%S') modules: calling ${name}.init" >&2
+            "${name}.init"
+            echo "$(date '+%H:%M:%S') modules: ${name}.init done" >&2
+        fi
+    done < <(modules.names)
+}
+
+modules.on_exit() {
+    local name
+    while IFS= read -r name; do
+        if declare -f "${name}.on_exit" > /dev/null 2>&1; then
+            "${name}.on_exit"
+        fi
+    done < <(modules.names)
+}

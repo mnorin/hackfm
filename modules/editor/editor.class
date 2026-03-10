@@ -129,7 +129,7 @@ __EDITOR__.draw_status(){
 
 # Draw help bar (uses appframe)
 __EDITOR__.draw_help(){
-    __EDITOR___appframe.draw_fkeys "Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit"
+    __EDITOR___appframe.draw_fkeys 0 "Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit"
 }
 
 # Draw context - populated once by _prepare_draw_ctx, read by draw_line.

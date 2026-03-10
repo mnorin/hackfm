@@ -90,6 +90,7 @@ trap 'hackfm.cleanup; exit 0' INT TERM
 . "$HACKFM_DIR/openhandler.class"
 
 . "$HACKFM_DIR/dialogs.class"
+. "$HACKFM_DIR/modules.class"
 
 # App state
 ACTIVE_PANEL=0
@@ -124,7 +125,6 @@ declare -Ag __MODULE_KEY_LABELS=()
 declare -Ag __MODULE_KEY_LABEL_FUNCS=()
 declare -ag __FKEYBAR_LABELS=()
 __HACKFM_FKEY_LABEL=""
-__HACKFM_ACTIVE_LAYER=0
 __HACKFM_ACTIVE_LAYER=0
 
 hackfm.module.register_key() {
@@ -225,59 +225,15 @@ hackfm.module.subscribe() {
     broker.subscribe "$topic" "$handler"
 }
 
-# Load all enabled modules from hackfm.conf (module_NAME_enabled=1)
 hackfm.cleanup() {
-    trap - ERR WINCH INT TERM
+    trap - ERR WINCH INT TERM USR1
     tui.cursor.style.default
     tui.cursor.show
     tui.screen.main
     [ -n "$ORIGINAL_STTY" ] && stty "$ORIGINAL_STTY" 2>/dev/null
     main_frame.cleanup
+    modules.on_exit
 }
-
-hackfm.load_modules.names() {
-    local conf="$HACKFM_DIR/conf/hackfm.conf"
-    [ -f "$conf" ] || return
-    local line
-    while IFS= read -r line; do
-        [[ "$line" =~ ^[[:space:]]*$  ]] && continue
-        [[ "$line" =~ ^[[:space:]]*\# ]] && continue
-        if [[ "$line" =~ ^module_([a-zA-Z0-9_]+)_enabled=1$ ]]; then
-            local name="${BASH_REMATCH[1]}"
-            local module_script="$HACKFM_DIR/modules/$name/$name.mod"
-            if [ -f "$module_script" ]; then
-                echo "$name"
-            else
-                echo "$(date '+%H:%M:%S') load_modules: script not found: $module_script" >&2
-            fi
-        fi
-    done < "$conf"
-}
-
-hackfm.load_modules.pre_init() {
-    local name
-    while IFS= read -r name; do
-        echo "$(date '+%H:%M:%S') load_modules: sourcing $name" >&2
-        . "$HACKFM_DIR/modules/$name/$name.mod"
-        if declare -f "${name}.pre_init" > /dev/null 2>&1; then
-            echo "$(date '+%H:%M:%S') load_modules: calling ${name}.pre_init" >&2
-            "${name}.pre_init"
-            echo "$(date '+%H:%M:%S') load_modules: ${name}.pre_init done" >&2
-        fi
-    done < <(hackfm.load_modules.names)
-}
-
-hackfm.load_modules.init() {
-    local name
-    while IFS= read -r name; do
-        if declare -f "${name}.init" > /dev/null 2>&1; then
-            echo "$(date '+%H:%M:%S') load_modules: calling ${name}.init" >&2
-            "${name}.init"
-            echo "$(date '+%H:%M:%S') load_modules: ${name}.init done" >&2
-        fi
-    done < <(hackfm.load_modules.names)
-}
-
 
 get_active_panel() {
     echo "${PANELS[$ACTIVE_PANEL]}"
@@ -337,7 +293,6 @@ draw_main_frame.process_message()       { draw_main_frame;       }
 # INITIALIZATION
 # ============================================================================
 
-# Initialize
 init() {
     # Save original terminal settings before TUI takes over
     ORIGINAL_STTY=$(stty -g 2>/dev/null)
@@ -349,7 +304,7 @@ init() {
     tui.screen.alt
 
     # Pre-init modules — run before any objects are created so modules can override constructors
-    hackfm.load_modules.pre_init
+    modules.pre_init
 
     # Create appframe if needed
     if [ $APP_FRAME_CREATED -eq 0 ]; then
@@ -446,7 +401,7 @@ init() {
     setup_menu
 
     # Init modules — register keys, menu items, subscriptions
-    hackfm.load_modules.init
+    modules.init
 }
 
 # ============================================================================
@@ -479,7 +434,7 @@ redraw_panels_for_dropdown() {
     fi
 }
 
-# Draw screen
+# Draw title bar and F-key bar
 draw_main_frame() {
     main_frame.draw_title
     hackfm.fkeybar_labels
@@ -578,6 +533,7 @@ execute_command() {
     
     # Return to panels immediately
     PANELS_VISIBLE=1
+    stty -echo 2>/dev/null
     tui.screen.alt
     main_frame.setup
     reload_both_panels
@@ -703,9 +659,6 @@ show_menu() {
     broker.publish "ui.menu_closed" ""
 }
 
-# View file (F3)
-
-
 # Main loop
 main_loop() {
     # Signal that we're in main loop (for resize handler)
@@ -715,7 +668,7 @@ main_loop() {
     
     while true; do
         local key=$(tui.input.key)
-        
+
         # Check if command line has text
         local cmdline_text=$(cmd.text)
         local has_cmdline_text=0
@@ -874,7 +827,6 @@ main_loop() {
                 fi
                 ;;
 
-            # Ctrl+D - Quick directory jump
             # Ctrl+O - toggle between File Manager and Terminal view
             CTRL-O)
                 PANELS_VISIBLE=$((1 - PANELS_VISIBLE))
@@ -895,7 +847,7 @@ main_loop() {
                     # Restore terminal to sane interactive mode
                     stty sane
                     
-                    # Spawn a real interactive bash with Ctrl+O bound to exit
+                    # Spawn a real interactive bash with Ctrl+O bound to exit silently
                     trap - ERR
                     set +e
                     bash --rcfile <(cat <<'RCFILE'
@@ -904,8 +856,9 @@ if [ -f ~/.bashrc ]; then
     source ~/.bashrc
 fi
 
-# Bind Ctrl+O to exit - use PROMPT_COMMAND to ensure it's set
-PROMPT_COMMAND='bind "\"\C-o\": \"exit\n\""; '"${PROMPT_COMMAND}"
+# Bind Ctrl+O to exit silently — wrap in function to suppress bash printing the command
+__hackfm_exit() { exit; }
+bind -x '"\C-o": __hackfm_exit'
 RCFILE
 ) -i < /dev/tty > /dev/tty 2>&1 || true
                     set -e
@@ -914,7 +867,8 @@ RCFILE
                     # When bash exits, return to panels
                     PANELS_VISIBLE=1
                     TERMINAL_MODE=0
-                    
+
+                    stty -echo 2>/dev/null
                     tui.screen.alt
                     # Reinitialize appframe to restore terminal settings
                     main_frame.setup
@@ -931,8 +885,6 @@ RCFILE
                 fi
                 ;;
                 
-            # Function keys - only work in panel mode with empty command line
-
             CTRL-SLASH)
                 # Insert filename under cursor into command line
                 local active=$(get_active_panel)
@@ -945,8 +897,6 @@ RCFILE
                     draw_command_line
                 fi
                 ;;
-
-            # Other keys - pass to command line or default handling
 
             # ESC - clear command line
             ESC)
