@@ -896,7 +896,7 @@ main_loop() {
                     # Restore terminal to sane interactive mode
                     stty sane
                     
-                    # Spawn a real interactive bash with Ctrl+O bound to exit
+                    # Spawn a real interactive bash with Ctrl+O bound to exit silently
                     trap - ERR
                     set +e
                     bash --rcfile <(cat <<'RCFILE'
@@ -905,8 +905,9 @@ if [ -f ~/.bashrc ]; then
     source ~/.bashrc
 fi
 
-# Bind Ctrl+O to exit - use PROMPT_COMMAND to ensure it's set
-PROMPT_COMMAND='bind "\"\C-o\": \"exit\n\""; '"${PROMPT_COMMAND}"
+# Bind Ctrl+O to exit silently — wrap in function to suppress bash printing the command
+__hackfm_exit() { exit; }
+bind -x '"\C-o": __hackfm_exit'
 RCFILE
 ) -i < /dev/tty > /dev/tty 2>&1 || true
                     set -e
