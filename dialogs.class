@@ -23,6 +23,8 @@ show_path_input() {
     size=$(tui.screen.size)
     local rows=${size% *}
     local cols=${size#* }
+    local max_width=$(( cols - 4 ))
+    [ $dialog_width -gt $max_width ] && dialog_width=$max_width
     local dialog_row=$(( (rows - dialog_height) / 2 ))
     local dialog_col=$(( (cols - dialog_width) / 2 ))
 
@@ -52,7 +54,8 @@ show_path_input() {
     # Message
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
     tui.color.bg_white; tui.color.black
-    printf "%-$((dialog_width - 4))s" "$message"
+    if [ ${#message} -gt $inner_width ]; then message="...${message: -$((inner_width - 3))}"; fi
+    printf "%-${inner_width}s" "$message"
 
     local input="$default"
     local cursor_pos=${#input}
@@ -131,9 +134,11 @@ _draw_progress_dialog() {
     local size=$(tui.screen.size)
     local rows=${size% *}
     local cols=${size#* }
+    local max_width=$(( cols - 4 ))
+    [ $dialog_width -gt $max_width ] && dialog_width=$max_width
+    local inner_width=$(( dialog_width - 4 ))
     local dialog_row=$(( (rows - dialog_height) / 2 ))
     local dialog_col=$(( (cols - dialog_width) / 2 ))
-    local inner_width=$(( dialog_width - 4 ))
 
     # Shadow
     tui.color.bg_black
@@ -210,6 +215,9 @@ _draw_status_dialog() {
     local dialog_height=5
     local size=$(tui.screen.size)
     local rows=${size% *}; local cols=${size#* }
+    local max_width=$(( cols - 4 ))
+    [ $dialog_width -gt $max_width ] && dialog_width=$max_width
+    local inner_width=$(( dialog_width - 4 ))
     local dialog_row=$(( (rows - dialog_height) / 2 ))
     local dialog_col=$(( (cols - dialog_width) / 2 ))
 
@@ -226,7 +234,8 @@ _draw_status_dialog() {
     tui.style.bold; printf " %s " "$title"; tui.style.reset
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
     tui.color.bg_white; tui.color.black
-    printf "%-$((dialog_width - 4))s" "$message"
+    if [ ${#message} -gt $inner_width ]; then message="...${message: -$((inner_width - 3))}"; fi
+    printf "%-${inner_width}s" "$message"
     tui.style.reset
 }
 
@@ -239,9 +248,11 @@ _draw_error_dialog() {
     local dialog_height=$([ -n "$line2" ] && echo 7 || echo 5)
     local size=$(tui.screen.size)
     local rows=${size% *}; local cols=${size#* }
+    local max_width=$(( cols - 4 ))
+    [ $dialog_width -gt $max_width ] && dialog_width=$max_width
+    local inner_width=$(( dialog_width - 4 ))
     local dialog_row=$(( (rows - dialog_height) / 2 ))
     local dialog_col=$(( (cols - dialog_width) / 2 ))
-    local inner_width=$(( dialog_width - 4 ))
 
     # Shadow
     tui.color.bg_black
@@ -261,10 +272,12 @@ _draw_error_dialog() {
     # Line 1
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
     tui.color.bg_red; tui.color.bright_white
+    if [ ${#line1} -gt $inner_width ]; then line1="...${line1: -$((inner_width - 3))}"; fi
     printf "%-${inner_width}s" "$line1"
     # Line 2
     if [ -n "$line2" ]; then
         tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2))
+        if [ ${#line2} -gt $inner_width ]; then line2="...${line2: -$((inner_width - 3))}"; fi
         printf "%-${inner_width}s" "$line2"
     fi
     # Press any key hint

@@ -469,6 +469,38 @@ __PANEL__.draw_header(){
 }
 
 # Render panel
+# Draw only the visible file rows (no border/header/info bar) — used by quick_search
+__PANEL__._draw_rows(){
+    local list=$(__PANEL__.list_source)
+    local x=$(__PANEL__.x)
+    local y=$(__PANEL__.y)
+    local width=$(__PANEL__.width)
+    local height=$(__PANEL__.height)
+    local scroll=$($list.scroll)
+    local count=$($list.count)
+    local max_visible=$((height - 3))
+    local time_col_width=17
+    local size_col_width=9
+    local name_col_width=$((width - time_col_width - size_col_width - 2))
+
+    for ((i=0; i<max_visible; i++)); do
+        local file_idx=$((scroll + i))
+        tui.cursor.move $((y + 1 + i)) $((x + 1))
+        if [ $file_idx -ge $count ]; then
+            local empty_row="$_PC_BG_BLUE"
+            empty_row+="$(printf "%${name_col_width}s" "")"
+            empty_row+="$_PC_WHITE│"
+            empty_row+="$(printf "%${size_col_width}s" "")"
+            empty_row+="│"
+            empty_row+="$(printf "%${time_col_width}s" "")"
+            empty_row+="$_PC_RESET"
+            printf '%b' "$empty_row"
+        else
+            printf '%b' "${__PANEL___rendered_rows[$file_idx]}"
+        fi
+    done
+}
+
 __PANEL__.render(){
     tui.cursor.hide
 
@@ -667,20 +699,25 @@ __PANEL__.quick_search(){
                     
                     # Search from beginning if text remains, else restore original position
                     if [ -n "$search_text" ]; then
+                        local _scroll_before=$($list.scroll)
                         __PANEL__._do_search "$search_text" || true
+                        if [ "$($list.scroll)" != "$_scroll_before" ]; then
+                            __PANEL__.render
+                        else
+                            __PANEL__._draw_rows
+                            __PANEL__.draw_info_bar
+                        fi
                     else
                         $list.selected = $original_selected
                         $list.scroll = $original_scroll
-                        
-                        # Re-render affected rows
                         local new_pos=$($list.selected)
                         if [ $old_pos -ne $new_pos ]; then
                             __PANEL___rendered_rows[$old_pos]=$(__PANEL__.render_row_string $old_pos)
                             __PANEL___rendered_rows[$new_pos]=$(__PANEL__.render_row_string $new_pos)
                         fi
+                        __PANEL__._draw_rows
+                        __PANEL__.draw_info_bar
                     fi
-                    
-                    __PANEL__.render
                 fi
                 ;;
             *)
@@ -689,10 +726,15 @@ __PANEL__.quick_search(){
                     search_text="${search_text}${key}"
                     __PANEL__.search_text = "$search_text"
                     
-                    # Perform search from beginning (ignore if not found)
+                    # Perform search — 0=found no scroll change, 1=not found, 2=scroll changed
+                    local _scroll_before=$($list.scroll)
                     __PANEL__._do_search "$search_text" || true
-                    
-                    __PANEL__.render
+                    if [ "$($list.scroll)" != "$_scroll_before" ]; then
+                        __PANEL__.render
+                    else
+                        __PANEL__._draw_rows
+                        __PANEL__.draw_info_bar
+                    fi
                 fi
                 ;;
         esac
@@ -727,19 +769,19 @@ __PANEL__._do_search(){
             
             # Adjust scroll to show selected item
             local scroll=$($list.scroll)
-            
+
             if [ $i -ge $((scroll + max_visible)) ]; then
                 $list.scroll = $((i - max_visible + 1))
             elif [ $i -lt $scroll ]; then
                 $list.scroll = $i
             fi
-            
+
             # Re-render the 2 affected rows
             if [ $old_selected -ne $i ]; then
                 __PANEL___rendered_rows[$old_selected]=$(__PANEL__.render_row_string $old_selected)
                 __PANEL___rendered_rows[$i]=$(__PANEL__.render_row_string $i)
             fi
-            
+
             return 0
         fi
     done
@@ -906,7 +948,13 @@ __PANEL__._enter_archive(){
         local py=$(__PANEL__.y)
         local pw=$(__PANEL__.width)
         local ph=$(__PANEL__.height)
-        "$dlg.show_status" "Opening Archive" "Opening archive $archive_file..." "$px" "$py" "$pw" "$ph"
+        local prefix="Opening archive "
+        local inner_width=$(( pw - 4 - 4 ))
+        local max_fname=$(( inner_width - ${#prefix} ))
+        if [ $max_fname -gt 0 ] && [ ${#archive_file} -gt $max_fname ]; then
+            archive_file="${archive_file:0:$((max_fname - 3))}..."
+        fi
+        "$dlg.show_status" "Opening Archive" "${prefix}${archive_file}" "$px" "$py" "$pw" "$ph"
     fi
 
     # Create archivelist object as a separate object
