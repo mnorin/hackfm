@@ -578,6 +578,7 @@ execute_command() {
     
     # Return to panels immediately
     PANELS_VISIBLE=1
+    stty -echo 2>/dev/null
     tui.screen.alt
     main_frame.setup
     reload_both_panels
@@ -914,7 +915,8 @@ RCFILE
                     # When bash exits, return to panels
                     PANELS_VISIBLE=1
                     TERMINAL_MODE=0
-                    
+
+                    stty -echo 2>/dev/null
                     tui.screen.alt
                     # Reinitialize appframe to restore terminal settings
                     main_frame.setup

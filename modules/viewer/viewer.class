@@ -224,7 +224,7 @@ __VIEWER__.show(){
         total_lines=${#__VIEWER___lines[@]}
     fi
 
-    __VIEWER___appframe.draw_frame_blue "Help" "" "Quit" "" "" "" "" "" "" "Quit"
+    __VIEWER___appframe.draw_frame_blue 0 "Help" "" "Quit" "" "" "" "" "" "" "Quit"
 
     # Disable line wrap and lock scroll region to content area only.
     # This means no stray output or implicit terminal scroll can ever touch

@@ -27,6 +27,7 @@ vimhook.run() {
 
     vim "$path/$filename" < /dev/tty > /dev/tty 2>&1 || true
 
+    stty -echo 2>/dev/null
     tui.screen.alt
     draw_screen
 }
