@@ -30,43 +30,26 @@ error_handler() {
 
 # Terminal resize handler
 resize_handler() {
-    # Only handle resize if main_frame exists
-    if ! declare -F main_frame.setup &>/dev/null; then
-        return
-    fi
-    
-    # Reinitialize frame (reads new terminal size)
-    main_frame.setup
-    
-    # Recalculate panel dimensions from new frame size
-    local rows=$(main_frame.rows)
-    local cols=$(main_frame.cols)
-    local main_height=$(main_frame.main_height)
-    local panel_width=$(((cols - 3) / 2))
-    local panel_height=$((main_height - 3))
-    
-    # Update left panel
+    hackfm.read_term_size
+    local panel_width=$(((__HACKFM_COLS - 3) / 2))
+    local panel_height=$((__HACKFM_ROWS - 5))
+
     left_panel.x = 1
     left_panel.y = 3
     left_panel.width = $panel_width
     left_panel.height = $panel_height
 
-    # Update right panel
     right_panel.x = $((panel_width + 3))
     right_panel.y = 3
-    right_panel.width = $((cols - panel_width - 4))
+    right_panel.width = $((__HACKFM_COLS - panel_width - 4))
     right_panel.height = $panel_height
 
-    # Update command line geometry
-    cmd.row = $((rows - 1))
+    cmd.row = $((__HACKFM_ROWS - 1))
     cmd.col = 1
-    cmd.width = $cols
+    cmd.width = $__HACKFM_COLS
 
-    # Rebuild row cache for new dimensions
     left_panel.prerender_all_rows
     right_panel.prerender_all_rows
-    
-    # Redraw everything
     draw_screen
 }
 
@@ -99,11 +82,42 @@ TERMINAL_MODE=0
 ORIGINAL_STTY=""
 
 PANELS=("left_panel" "right_panel")
-APP_FRAME_CREATED=0
-CMDLINE_CREATED=0
-TEXTVIEW_CREATED=0
-BROKER_CREATED=0
-MENU_CREATED=0
+
+# Terminal dimensions — set by hackfm.read_term_size
+__HACKFM_ROWS=24
+__HACKFM_COLS=80
+
+# Read current terminal size into __HACKFM_ROWS / __HACKFM_COLS
+hackfm.read_term_size() {
+    local size
+    size=$(tui.screen.size)
+    __HACKFM_ROWS=${size% *}
+    __HACKFM_COLS=${size#* }
+    stty -ixon 2>/dev/null
+}
+
+# Top-level object instantiation — declarative, order matters for dependencies
+fkeybar main_fkeybar
+title main_title
+main_title.text_left = "HackFM - Hackable File Manager"
+
+panel left_panel
+filelist left_panel.list
+left_panel.list.path = "$PWD"
+
+panel right_panel
+filelist right_panel.list
+right_panel.list.path = "$HOME"
+
+tui_dialog file_dialog
+
+commandline cmd
+cmd.text = ""
+cmd.cursor_pos = 0
+
+msgbroker broker
+
+menu main_menu
 
 # Read a value from hackfm.conf
 # Usage: conf_get KEY [DEFAULT]
@@ -119,97 +133,9 @@ conf_get() {
     echo "$default"
 }
 
-# MODULE API
-declare -Ag __MODULE_KEYS=()
-declare -Ag __MODULE_KEY_LABELS=()
-declare -Ag __MODULE_KEY_LABEL_FUNCS=()
-declare -ag __FKEYBAR_LABELS=()
-__HACKFM_FKEY_LABEL=""
-__HACKFM_ACTIVE_LAYER=0
-
-hackfm.module.register_key() {
-    local key="$1"
-    local func="$2"
-    local label="${3:-}"
-    if [ -n "${__MODULE_KEYS[$key]+x}" ]; then
-        __MODULE_KEYS[$key]="${__MODULE_KEYS[$key]} $func"
-    else
-        __MODULE_KEYS[$key]="$func"
-    fi
-    if [ -n "$label" ]; then
-        __MODULE_KEY_LABELS[$key]="$label"
-    fi
-}
-
-# Register a dynamic label function for a key.
-# The function sets __HACKFM_FKEY_LABEL to a non-empty string if it wants to claim the label,
-# or leaves it empty to pass to the next registered function.
-# Usage: hackfm.module.register_key_label KEY FUNC
-hackfm.module.register_key_label() {
-    local key="$1"
-    local func="$2"
-    if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
-        __MODULE_KEY_LABEL_FUNCS[$key]="${__MODULE_KEY_LABEL_FUNCS[$key]} $func"
-    else
-        __MODULE_KEY_LABEL_FUNCS[$key]="$func"
-    fi
-}
-
-hackfm.fkeybar_labels() {
-    local i offset
-    offset=$(( __HACKFM_ACTIVE_LAYER * 10 ))
-    __FKEYBAR_LABELS=()
-    for ((i=1; i<=10; i++)); do
-        local key="F$(( i + offset ))"
-        local label=""
-        if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
-            local cb
-            for cb in ${__MODULE_KEY_LABEL_FUNCS[$key]}; do
-                __HACKFM_FKEY_LABEL=""
-                $cb
-                if [ -n "$__HACKFM_FKEY_LABEL" ]; then
-                    label="$__HACKFM_FKEY_LABEL"
-                    break
-                fi
-            done
-        fi
-        if [ -z "$label" ]; then
-            label="${__MODULE_KEY_LABELS[$key]:-}"
-        fi
-        __FKEYBAR_LABELS+=("$label")
-    done
-}
-
-hackfm.fkeybar_layer_count() {
-    # Count populated layers (layers with at least one registered key)
-    local max_fkey=0
-    local key
-    for key in "${!__MODULE_KEYS[@]}"; do
-        if [[ "$key" =~ ^F([0-9]+)$ ]]; then
-            local n="${BASH_REMATCH[1]}"
-            [ "$n" -gt "$max_fkey" ] && max_fkey="$n"
-        fi
-    done
-    if [ "$max_fkey" -eq 0 ]; then
-        echo 1
-    else
-        echo $(( (max_fkey - 1) / 10 + 1 ))
-    fi
-}
-
-hackfm.fkeybar_layer_next() {
-    local total
-    total=$(hackfm.fkeybar_layer_count)
-    __HACKFM_ACTIVE_LAYER=$(( (__HACKFM_ACTIVE_LAYER + 1) % total ))
-    draw_main_frame
-}
-
-hackfm.fkeybar_layer_prev() {
-    local total
-    total=$(hackfm.fkeybar_layer_count)
-    __HACKFM_ACTIVE_LAYER=$(( (__HACKFM_ACTIVE_LAYER - 1 + total) % total ))
-    draw_main_frame
-}
+# MODULE API — thin wrappers around fkeybar
+hackfm.module.register_key()       { fkeybar.register_key "$@"; }
+hackfm.module.register_key_label() { fkeybar.register_key_label "$@"; }
 
 hackfm.module.add_menu_item() {
     local menu="$1"
@@ -229,9 +155,10 @@ hackfm.cleanup() {
     trap - ERR WINCH INT TERM USR1
     tui.cursor.style.default
     tui.cursor.show
+    tui.screen.clear
     tui.screen.main
+    stty ixon 2>/dev/null
     [ -n "$ORIGINAL_STTY" ] && stty "$ORIGINAL_STTY" 2>/dev/null
-    main_frame.cleanup
     modules.on_exit
 }
 
@@ -279,7 +206,7 @@ handle_terminal_enter() {
 handle_terminal_exit() {
     tui.screen.alt
     stty -echo 2>/dev/null
-    main_frame.setup
+    hackfm.read_term_size
     reload_both_panels
     draw_screen
 }
@@ -297,110 +224,55 @@ init() {
     # Save original terminal settings before TUI takes over
     ORIGINAL_STTY=$(stty -g 2>/dev/null)
 
-    # Disable echo for entire app lifetime - prevents escape sequences bleeding into display
+    # Disable echo for entire app lifetime
     stty -echo 2>/dev/null
 
-    # Switch to alternate screen for file manager
+    # Switch to alternate screen
     tui.screen.alt
 
-    # Pre-init modules — run before any objects are created so modules can override constructors
+    # Pre-init modules — before geometry is set so modules can override constructors
     modules.pre_init
 
-    # Create appframe if needed
-    if [ $APP_FRAME_CREATED -eq 0 ]; then
-        appframe main_frame
-        APP_FRAME_CREATED=1
-    fi
+    # Read terminal size
+    hackfm.read_term_size
+    local panel_width=$(((__HACKFM_COLS - 3) / 2))
+    local panel_height=$((__HACKFM_ROWS - 5))
 
-    # Configure
-    main_frame.title = "HackFM - Hackable File Manager"
-    main_frame.show_cursor = 0
-
-    # Setup
-    main_frame.setup
-
-    # Get terminal size from appframe
-    local rows=$(main_frame.rows)
-    local cols=$(main_frame.cols)
-    local main_height=$(main_frame.main_height)
-
-    local panel_width=$(( (cols - 3) / 2 ))
-    # Panel height = main area height - 3 (border at top, border at bottom, and command line)
-    local panel_height=$((main_height - 3))
-
-    # Create left panel with its own filelist
-    panel left_panel
     left_panel.x = 1
     left_panel.y = 3
     left_panel.width = $panel_width
     left_panel.height = $panel_height
-    
-    # Create filelist as a sub-object of left_panel
-    filelist left_panel.list
-    left_panel.list.path = "$PWD"
-    
-    # Set active AFTER filelist is created
     left_panel.active = 1
-    
-    # Create right panel with its own filelist
-    panel right_panel
+
     right_panel.x = $((panel_width + 3))
     right_panel.y = 3
-    right_panel.width = $(( cols - panel_width - 4 ))
+    right_panel.width = $((__HACKFM_COLS - panel_width - 4))
     right_panel.height = $panel_height
-    
-    # Create filelist as a sub-object of right_panel
-    filelist right_panel.list
-    right_panel.list.path = "$HOME"
-    
-    # Set active AFTER filelist is created
     right_panel.active = 0
-    
-    # Create dialog
-    tui_dialog file_dialog
-    
-    # Create command line instance
-    if [ $CMDLINE_CREATED -eq 0 ]; then
-        commandline cmd
-        CMDLINE_CREATED=1
-    fi
 
-    # Configure command line
-    local cmdline_row=$((rows - 1))  # One row above F-key bar
-    cmd.row = $cmdline_row
+    # Set command line geometry and prompt
+    cmd.row = $((__HACKFM_ROWS - 1))
     cmd.col = 1
-    cmd.width = $cols
+    cmd.width = $__HACKFM_COLS
     cmd.prompt = "$USER@$(hostname):$PWD\$ "
-    cmd.text = ""
-    cmd.cursor_pos = 0
 
-    # Create message broker and wire up pub/sub
-    if [ $BROKER_CREATED -eq 0 ]; then
-        msgbroker broker
-        BROKER_CREATED=1
-    fi
-
-    # Register objects with broker - each object subscribes to topics it cares about
+    # Wire objects to broker
     left_panel.register broker
     right_panel.register broker
     cmd.register broker
 
-    # Subscribe to terminal lifecycle events from openhandler
-    broker.subscribe "ui.terminal_enter" "handle_terminal_enter"
-    broker.subscribe "ui.terminal_exit" "handle_terminal_exit"
+    # Subscribe to broker topics
+    broker.subscribe "ui.terminal_enter"  "handle_terminal_enter"
+    broker.subscribe "ui.terminal_exit"   "handle_terminal_exit"
+    broker.subscribe "viewer_closed"      "draw_main_frame"
+    broker.subscribe "editor_closed"      "draw_main_frame"
 
-    # Subscribe draw_main_frame to topics that require full redraw
-    broker.subscribe "viewer_closed"          "draw_main_frame"
-    broker.subscribe "editor_closed"          "draw_main_frame"
-
-    # Wire dialog to panels for status messages
+    # Wire dialog to panels
     left_panel.dialog = file_dialog
     right_panel.dialog = file_dialog
 
-    # Setup menu structure (must be before load_modules so modules can add items)
+    # Setup menu and init modules
     setup_menu
-
-    # Init modules — register keys, menu items, subscriptions
     modules.init
 }
 
@@ -436,16 +308,24 @@ redraw_panels_for_dropdown() {
 
 # Draw title bar and F-key bar
 draw_main_frame() {
-    main_frame.draw_title
-    hackfm.fkeybar_labels
-    main_frame.draw_fkeys "$__HACKFM_ACTIVE_LAYER" "${__FKEYBAR_LABELS[@]}"
+    main_title.width = $__HACKFM_COLS
+    main_title.render
+    fkeybar.update_labels
+    main_fkeybar.row = $__HACKFM_ROWS
+    main_fkeybar.width = $__HACKFM_COLS
+    main_fkeybar.render "$__HACKFM_ACTIVE_LAYER" "${__FKEYBAR_LABELS[@]}"
 }
 
 draw_screen() {
     tui.screen.alt
     tui.cursor.hide
-    hackfm.fkeybar_labels
-    main_frame.draw_frame "$__HACKFM_ACTIVE_LAYER" "${__FKEYBAR_LABELS[@]}"
+    tui.screen.clear
+    fkeybar.update_labels
+    main_title.width = $__HACKFM_COLS
+    main_title.render
+    main_fkeybar.row = $__HACKFM_ROWS
+    main_fkeybar.width = $__HACKFM_COLS
+    main_fkeybar.render "$__HACKFM_ACTIVE_LAYER" "${__FKEYBAR_LABELS[@]}"
     if [ $PANELS_VISIBLE -eq 1 ]; then
         left_panel.render
         right_panel.render
@@ -535,7 +415,7 @@ execute_command() {
     PANELS_VISIBLE=1
     stty -echo 2>/dev/null
     tui.screen.alt
-    main_frame.setup
+    hackfm.read_term_size
     reload_both_panels
 }
 
@@ -597,9 +477,6 @@ handler_sort_right_size() { _sort_panel right_panel size_desc size_asc;  }
 handler_sort_right_ext()  { _sort_panel right_panel ext_asc   ext_desc;  }
 
 setup_menu() {
-    menu main_menu
-    MENU_CREATED=1
-
     main_menu.background_redraw = "redraw_panels_for_dropdown"
     main_menu.clear
 
@@ -629,8 +506,8 @@ setup_menu() {
     # Register built-in F-key bindings
     hackfm.module.register_key "F9"  "show_menu"  "Menu"
     hackfm.module.register_key "F10" "hackfm.quit" "Quit"
-    hackfm.module.register_key "CTRL-LEFT"  "hackfm.fkeybar_layer_prev"
-    hackfm.module.register_key "CTRL-RIGHT" "hackfm.fkeybar_layer_next"
+    hackfm.module.register_key "CTRL-LEFT"  "fkeybar.layer_prev"
+    hackfm.module.register_key "CTRL-RIGHT" "fkeybar.layer_next"
 }
 
 hackfm.quit() {
@@ -655,7 +532,8 @@ show_menu() {
         fi
     fi
 
-    main_frame.draw_title
+    main_title.width = $__HACKFM_COLS
+    main_title.render
     broker.publish "ui.menu_closed" ""
 }
 
@@ -870,8 +748,7 @@ RCFILE
 
                     stty -echo 2>/dev/null
                     tui.screen.alt
-                    # Reinitialize appframe to restore terminal settings
-                    main_frame.setup
+                    hackfm.read_term_size
                     reload_both_panels
                     draw_screen
                     # Cursor is hidden by draw_screen
@@ -914,14 +791,11 @@ RCFILE
                     key="F$(( _fnum + __HACKFM_ACTIVE_LAYER * 10 ))"
                 fi
                 # Check module-registered keys first (guard against keys with dots/invalid chars)
-                if [[ "$key" =~ ^[A-Za-z0-9_-]+$ ]] && [ -n "${__MODULE_KEYS[$key]+x}" ]; then
-                    if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
-                        local _handler
-                        for _handler in ${__MODULE_KEYS[$key]}; do
-                            if $_handler; then break; fi
-                        done
-                    fi
-                elif [ ${#key} -eq 1 ] && [[ $key != $'\x1b' ]] && [[ $key != $'\x00' ]]; then
+                local _dispatched=0
+                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
+                    fkeybar.dispatch_key "$key" && _dispatched=1 || true
+                fi
+                if [ $_dispatched -eq 0 ] && [ ${#key} -eq 1 ] && [[ $key != $'\x1b' ]] && [[ $key != $'\x00' ]]; then
                     cmd.insert "$key"
                     draw_command_line
                 fi

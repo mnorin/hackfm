@@ -29,9 +29,9 @@ titled.init() {
 }
 
 titled._on_update() {
-    local text="$1"
-    main_frame.title = "$text"
-    main_frame.draw_title
+    main_title.text_left = "$1"
+    main_title.width = $__HACKFM_COLS
+    main_title.render
 }
 titled._on_update.process_message() { titled._on_update "$2"; }
 
@@ -42,12 +42,12 @@ titled._start_loop() {
 
     (
         while true; do
-            sleep "$interval"
             local text
             text=$(eval "$cmd" 2>/dev/null) || true
             if [ -n "$text" ]; then
                 printf 'title.update:%s\n' "$text" >> "$fifo" 2>/dev/null || true
             fi
+            sleep "$interval"
         done
     ) &
 

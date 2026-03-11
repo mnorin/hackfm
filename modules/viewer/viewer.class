@@ -2,7 +2,8 @@
 # viewer.class - File viewer using ba.sh
 
 # Load dependencies
-. "$HACKFM_DIR/appframe.h"
+. "$HACKFM_DIR/title.h"
+. "$HACKFM_DIR/fkeybar.h"
 
 declare -Ag __VIEWER___properties=()
 
@@ -22,15 +23,6 @@ __VIEWER__.file_total(){   __VIEWER__.property file_total   "$@"; }
 __VIEWER__.use_window(){   __VIEWER__.property use_window   "$@"; }
 __VIEWER__.rows(){         __VIEWER__.property rows         "$@"; }
 __VIEWER__.cols(){         __VIEWER__.property cols         "$@"; }
-
-__VIEWER__.appframe_created(){
-    if [ "$1" = "=" ]; then
-        __VIEWER__.property appframe_created = "$2"
-    else
-        local val=$(__VIEWER__.property appframe_created)
-        echo "${val:-0}"
-    fi
-}
 
 # File lines array (windowed buffer)
 declare -ag __VIEWER___lines=()
@@ -195,19 +187,14 @@ __VIEWER__.show(){
         return 1
     fi
 
-    local appframe_created=$(__VIEWER__.appframe_created)
-    if [ $appframe_created -eq 0 ]; then
-        appframe __VIEWER___appframe
-        __VIEWER__.appframe_created = 1
-    fi
+    title __VIEWER___title
+    fkeybar __VIEWER___fkeybar
 
-    __VIEWER___appframe.title = " File: $filename"
-    __VIEWER___appframe.show_cursor = 0
-    __VIEWER___appframe.setup
-
-    local rows=$(__VIEWER___appframe.rows)
-    local cols=$(__VIEWER___appframe.cols)
-    local content_height=$(__VIEWER___appframe.main_height)
+    hackfm.read_term_size
+    tui.cursor.hide
+    local rows=$__HACKFM_ROWS
+    local cols=$__HACKFM_COLS
+    local content_height=$(( rows - 2 ))
     # Override with explicit properties if set
     local prop_rows=$(__VIEWER__.rows)
     local prop_cols=$(__VIEWER__.cols)
@@ -224,7 +211,15 @@ __VIEWER__.show(){
         total_lines=${#__VIEWER___lines[@]}
     fi
 
-    __VIEWER___appframe.draw_frame_blue 0 "Help" "" "Quit" "" "" "" "" "" "" "Quit"
+    tui.screen.alt
+    tui.cursor.hide
+    tui.screen.clear
+    __VIEWER___title.width = $cols
+    __VIEWER___title.text_left = " File: $filename"
+    __VIEWER___title.render
+    __VIEWER___fkeybar.row = $rows
+    __VIEWER___fkeybar.width = $cols
+    __VIEWER___fkeybar.render 0 "Help" "" "Quit" "" "" "" "" "" "" "Quit"
 
     # Disable line wrap and lock scroll region to content area only.
     # This means no stray output or implicit terminal scroll can ever touch
@@ -248,8 +243,9 @@ __VIEWER__.show(){
     local current_line=$((scroll + 1))
     local pct=0
     [ "$total_lines" -gt 0 ] && pct=$(( scroll * 100 / total_lines ))
-    __VIEWER___appframe.title = " File: $filename | Line $current_line (~$pct%)"
-    __VIEWER___appframe.draw_title
+    __VIEWER___title.text_left = " File: $filename"
+    __VIEWER___title.text_right = "Line $current_line (~$pct%) "
+    __VIEWER___title.render
     __VIEWER__.display_content
 
     while true; do
@@ -345,8 +341,9 @@ __VIEWER__.show(){
             # Update title with new line number
             current_line=$((scroll + 1))
             [ "$total_lines" -gt 0 ] && pct=$(( scroll * 100 / total_lines )) || pct=0
-            __VIEWER___appframe.title = " File: $filename | Line $current_line (~$pct%)"
-            __VIEWER___appframe.draw_title
+            __VIEWER___title.text_left = " File: $filename"
+            __VIEWER___title.text_right = "Line $current_line (~$pct%) "
+            __VIEWER___title.render
         fi
     done
 

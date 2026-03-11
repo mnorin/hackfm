@@ -60,3 +60,110 @@ __FKEYBAR__.render(){
 
     tui.color.reset
 }
+
+# ============================================================================
+# Key registration, layer state, and dispatch
+# Note: these use literal 'fkeybar.' prefix so they are NOT substituted by
+# the ba.sh constructor (which only replaces __FKEYBAR__).
+# ============================================================================
+
+declare -Ag __MODULE_KEYS=()
+declare -Ag __MODULE_KEY_LABELS=()
+declare -Ag __MODULE_KEY_LABEL_FUNCS=()
+declare -ag __FKEYBAR_LABELS=()
+__HACKFM_FKEY_LABEL=""
+__HACKFM_ACTIVE_LAYER=0
+
+fkeybar.register_key() {
+    local key="$1"
+    local func="$2"
+    local label="${3:-}"
+    if [ -n "${__MODULE_KEYS[$key]+x}" ]; then
+        __MODULE_KEYS[$key]="${__MODULE_KEYS[$key]} $func"
+    else
+        __MODULE_KEYS[$key]="$func"
+    fi
+    if [ -n "$label" ]; then
+        __MODULE_KEY_LABELS[$key]="$label"
+    fi
+}
+
+# Register a dynamic label callback for a key.
+# The callback sets __HACKFM_FKEY_LABEL to claim the label, or leaves it empty to pass.
+# Usage: fkeybar.register_key_label KEY FUNC
+fkeybar.register_key_label() {
+    local key="$1"
+    local func="$2"
+    if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
+        __MODULE_KEY_LABEL_FUNCS[$key]="${__MODULE_KEY_LABEL_FUNCS[$key]} $func"
+    else
+        __MODULE_KEY_LABEL_FUNCS[$key]="$func"
+    fi
+}
+
+# Recompute __FKEYBAR_LABELS for the current layer
+fkeybar.update_labels() {
+    local i offset
+    offset=$(( __HACKFM_ACTIVE_LAYER * 10 ))
+    __FKEYBAR_LABELS=()
+    for ((i=1; i<=10; i++)); do
+        local key="F$(( i + offset ))"
+        local label=""
+        if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
+            local cb
+            for cb in ${__MODULE_KEY_LABEL_FUNCS[$key]}; do
+                __HACKFM_FKEY_LABEL=""
+                $cb
+                if [ -n "$__HACKFM_FKEY_LABEL" ]; then
+                    label="$__HACKFM_FKEY_LABEL"
+                    break
+                fi
+            done
+        fi
+        if [ -z "$label" ]; then
+            label="${__MODULE_KEY_LABELS[$key]:-}"
+        fi
+        __FKEYBAR_LABELS+=("$label")
+    done
+}
+
+fkeybar.layer_count() {
+    local max_fkey=0
+    local key
+    for key in "${!__MODULE_KEYS[@]}"; do
+        if [[ "$key" =~ ^F([0-9]+)$ ]]; then
+            local n="${BASH_REMATCH[1]}"
+            [ "$n" -gt "$max_fkey" ] && max_fkey="$n"
+        fi
+    done
+    if [ "$max_fkey" -eq 0 ]; then
+        echo 1
+    else
+        echo $(( (max_fkey - 1) / 10 + 1 ))
+    fi
+}
+
+fkeybar.layer_next() {
+    local total
+    total=$(fkeybar.layer_count)
+    __HACKFM_ACTIVE_LAYER=$(( (__HACKFM_ACTIVE_LAYER + 1) % total ))
+    draw_main_frame
+}
+
+fkeybar.layer_prev() {
+    local total
+    total=$(fkeybar.layer_count)
+    __HACKFM_ACTIVE_LAYER=$(( (__HACKFM_ACTIVE_LAYER - 1 + total) % total ))
+    draw_main_frame
+}
+
+fkeybar.dispatch_key() {
+    local key="$1"
+    if [[ "$key" =~ ^[A-Za-z0-9_-]+$ ]] && [ -n "${__MODULE_KEYS[$key]+x}" ]; then
+        local _handler
+        for _handler in ${__MODULE_KEYS[$key]}; do
+            if $_handler; then return 0; fi
+        done
+    fi
+    return 1
+}

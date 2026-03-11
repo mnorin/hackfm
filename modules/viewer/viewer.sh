@@ -12,7 +12,8 @@ mkdir -p "$HACKFM_DIR/logs"
 . "$HACKFM_DIR/tui/input.class"
 . "$HACKFM_DIR/tui/region.class"
 . "$HACKFM_DIR/tui/style.class"
-. "$HACKFM_DIR/appframe.h"
+. "$HACKFM_DIR/title.h"
+. "$HACKFM_DIR/fkeybar.h"
 . "$HACKFM_DIR/modules/viewer/viewer.h"
 
 [ -z "$1" ] && exit 1

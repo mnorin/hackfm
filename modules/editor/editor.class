@@ -2,7 +2,7 @@
 # editor.class - Text editor using ba.sh
 
 # Load dependencies
-. "$HACKFM_DIR/appframe.h"
+. "$HACKFM_DIR/title.h"
 
 declare -Ag __EDITOR___properties=()
 
@@ -27,15 +27,6 @@ __EDITOR__.selection_start_col(){ __EDITOR__.property selection_start_col "$@"; 
 __EDITOR__.selection_end_row(){   __EDITOR__.property selection_end_row   "$@"; }
 __EDITOR__.selection_end_col(){   __EDITOR__.property selection_end_col   "$@"; }
 __EDITOR__.selection_marking(){   __EDITOR__.property selection_marking   "$@"; }
-__EDITOR__.appframe_created(){
-    if [ "$1" = "=" ]; then
-        __EDITOR__.property appframe_created = "$2"
-    else
-        local val=$(__EDITOR__.property appframe_created)
-        echo "${val:-0}"
-    fi
-}
-
 # Text buffer
 declare -ag __EDITOR___lines=()
 
@@ -43,6 +34,8 @@ declare -ag __EDITOR___lines=()
 declare -ag __EDITOR___clipboard=()
 
 # Terminal dimensions
+EDITOR_ROWS=24
+EDITOR_COLS=80
 EDITOR_VIEWPORT_HEIGHT=20
 EDITOR_VIEWPORT_WIDTH=80
 EDITOR_STATUS_ROW=1
@@ -127,9 +120,11 @@ __EDITOR__.draw_status(){
     tui.color.reset
 }
 
-# Draw help bar (uses appframe)
+# Draw help bar
 __EDITOR__.draw_help(){
-    __EDITOR___appframe.draw_fkeys 0 "Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit"
+    __EDITOR___fkeybar.row = $EDITOR_ROWS
+    __EDITOR___fkeybar.width = $EDITOR_COLS
+    __EDITOR___fkeybar.render 0 "Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit"
 }
 
 # Draw context - populated once by _prepare_draw_ctx, read by draw_line.
@@ -669,9 +664,9 @@ __EDITOR__.delete_selection(){
 
 # Show editor (blocking - runs until user exits)
 __EDITOR__.show(){
-    # Lazy-init appframe and dialog on first call (tui_dialog not available at source time)
+    # Lazy-init title and dialog on first call (tui_dialog not available at source time)
     if ! declare -F __EDITOR___dialog.show_confirm &>/dev/null; then
-        appframe __EDITOR___appframe
+        fkeybar __EDITOR___fkeybar
         tui_dialog __EDITOR___dialog
     fi
 
@@ -679,18 +674,17 @@ __EDITOR__.show(){
     local filepath=$(__EDITOR__.filepath)
     local filename=$(basename "$filepath")
     
-    # Configure appframe
-    __EDITOR___appframe.title = " $filename"
-    __EDITOR___appframe.show_cursor = 1  # Show cursor for editing
-    
-    # Setup
-    __EDITOR___appframe.setup
-    
-    # Get dimensions
-    local rows=$(__EDITOR___appframe.rows)
-    local cols=$(__EDITOR___appframe.cols)
-    
-    EDITOR_VIEWPORT_HEIGHT=$(__EDITOR___appframe.main_height)
+    local _size
+    _size=$(tui.screen.size)
+    EDITOR_ROWS=${_size% *}
+    EDITOR_COLS=${_size#* }
+    tui.screen.alt
+    tui.cursor.show
+    stty -ixon 2>/dev/null
+    local rows=$EDITOR_ROWS
+    local cols=$EDITOR_COLS
+
+    EDITOR_VIEWPORT_HEIGHT=$(( rows - 2 ))
     EDITOR_VIEWPORT_WIDTH=$cols
     EDITOR_HELP_ROW=$rows
     
@@ -1059,7 +1053,9 @@ __EDITOR__.show(){
     # Cleanup
     tui.region.reset
     tui.screen.wrap_on
-    __EDITOR___appframe.cleanup
+    tui.screen.clear
+    tui.screen.main
+    stty ixon 2>/dev/null
 }
 
 # Open file (convenience method that loads and shows)
