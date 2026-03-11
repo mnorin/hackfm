@@ -97,6 +97,8 @@ hackfm.read_term_size() {
 }
 
 # Top-level object instantiation — declarative, order matters for dependencies
+modules.pre_init
+
 fkeybar main_fkeybar
 title main_title
 main_title.text_left = "HackFM - Hackable File Manager"
@@ -229,9 +231,6 @@ init() {
 
     # Switch to alternate screen
     tui.screen.alt
-
-    # Pre-init modules — before geometry is set so modules can override constructors
-    modules.pre_init
 
     # Read terminal size
     hackfm.read_term_size
