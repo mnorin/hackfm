@@ -64,27 +64,10 @@ fsdelete._run_multi() {
 
     [ $failed -eq 1 ] && show_error "Some files failed to delete"
 
-    reload_active_panel
-
-    local file_count
-    file_count=$($active_list.count)
-    local new_index=$saved_index
-    [ $new_index -ge $file_count ] && [ $file_count -gt 0 ] && new_index=$(( file_count - 1 ))
-    $active_list.selected = $new_index
-
     local active_panel
     active_panel=$(get_active_panel)
-    local panel_height
-    panel_height=$($active_panel.height)
-    local max_visible=$(( panel_height - 3 ))
-    local scroll
-    scroll=$($active_list.scroll)
-
-    if [ $new_index -lt $scroll ]; then
-        $active_list.scroll = $new_index
-    elif [ $new_index -ge $(( scroll + max_visible )) ]; then
-        $active_list.scroll = $(( new_index - max_visible + 1 ))
-    fi
+    $active_panel.reload
+    $active_panel.render
 
     broker.publish "dialog_closed" ""
 }
@@ -147,6 +130,7 @@ fsdelete._run_single() {
         local active_panel
         active_panel=$(get_active_panel)
         $active_panel.reload
+        $active_panel.render
         broker.publish "dialog_closed" ""
     fi
 }

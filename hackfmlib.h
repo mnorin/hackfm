@@ -3,11 +3,6 @@
 # Sourced once by hackfm.sh; subprocess scripts (modules/viewer/viewer.sh, modules/editor/editor.sh)
 # source their own .h files independently.
 
-appframe(){
-    local class_code=$(<"$HACKFM_DIR/appframe.class")
-    . <(printf '%s' "${class_code//__APPFRAME__/$1}")
-}
-
 tui_dialog(){
     local class_code=$(<"$HACKFM_DIR/dialog.class")
     . <(printf '%s' "${class_code//__DIALOG__/$1}")
@@ -97,4 +92,9 @@ menu(){
 fkeybar(){
     local class_code=$(<"$HACKFM_DIR/fkeybar.class")
     . <(printf '%s' "${class_code//__FKEYBAR__/$1}")
+}
+
+title(){
+    local class_code=$(<"$HACKFM_DIR/title.class")
+    . <(printf '%s' "${class_code//__TITLE__/$1}")
 }

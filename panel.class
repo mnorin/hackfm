@@ -501,6 +501,22 @@ __PANEL__._draw_rows(){
     done
 }
 
+# Toggle sort order for a given field and re-render
+# Usage: panel.sort name|date|size|ext
+__PANEL__.sort() {
+    local field="$1"
+    local list=$(__PANEL__.list_source)
+    local current=$($list.sort_order)
+    case "$field" in
+        name) [ "$current" = "name_asc"  ] && $list.sort_order = "name_desc"  || $list.sort_order = "name_asc"  ;;
+        date) [ "$current" = "date_desc" ] && $list.sort_order = "date_asc"   || $list.sort_order = "date_desc" ;;
+        size) [ "$current" = "size_desc" ] && $list.sort_order = "size_asc"   || $list.sort_order = "size_desc" ;;
+        ext)  [ "$current" = "ext_asc"  ] && $list.sort_order = "ext_desc"   || $list.sort_order = "ext_asc"   ;;
+    esac
+    __PANEL__.prerender_all_rows
+    __PANEL__.render
+}
+
 __PANEL__.render(){
     tui.cursor.hide
 
