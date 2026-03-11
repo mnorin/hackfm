@@ -57,7 +57,7 @@ titled._start_loop() {
             local text
             text=$(eval "$__TITLED_CMD" 2>/dev/null) || true
             if [ -n "$text" ]; then
-                printf 'title.update:%s\n' "$text" >> "$fifo" 2>/dev/null || true
+                timeout 1 bash -c "printf 'title.update:%s\n' \"\$1\" >> \"\$2\"" -- "$text" "$fifo" 2>/dev/null || true
             fi
             sleep "$__TITLED_INTERVAL"
         done

@@ -2,6 +2,7 @@
 # fkeybar.class - Function key bar (MC style) using ba.sh
 
 declare -Ag __FKEYBAR___properties=()
+__FKEYBAR___properties[active_layer]=0
 
 __FKEYBAR__.property(){
     if [ "$2" = "=" ]; then
@@ -12,18 +13,18 @@ __FKEYBAR__.property(){
 }
 
 # Property accessors
-__FKEYBAR__.row(){   __FKEYBAR__.property row   "$@"; }
-__FKEYBAR__.width(){ __FKEYBAR__.property width "$@"; }
+__FKEYBAR__.row(){          __FKEYBAR__.property row          "$@"; }
+__FKEYBAR__.width(){        __FKEYBAR__.property width        "$@"; }
+__FKEYBAR__.active_layer(){ __FKEYBAR__.property active_layer "$@"; }
 
 # Render function key bar
-# Usage: fkeybar.render layer "Label1" "Label2" ... "Label10"
 __FKEYBAR__.render(){
-    local layer="$1"
-    shift
+    fkeybar.update_labels
+    local layer=$(__FKEYBAR__.active_layer)
     local row=$(__FKEYBAR__.row)
     local width=$(__FKEYBAR__.width)
 
-    local labels=("$@")
+    local labels=("${__FKEYBAR_LABELS[@]}")
     while [ ${#labels[@]} -lt 10 ]; do
         labels+=("")
     done
@@ -72,7 +73,6 @@ declare -Ag __MODULE_KEY_LABELS=()
 declare -Ag __MODULE_KEY_LABEL_FUNCS=()
 declare -ag __FKEYBAR_LABELS=()
 __HACKFM_FKEY_LABEL=""
-__HACKFM_ACTIVE_LAYER=0
 
 fkeybar.register_key() {
     local key="$1"
@@ -104,7 +104,7 @@ fkeybar.register_key_label() {
 # Recompute __FKEYBAR_LABELS for the current layer
 fkeybar.update_labels() {
     local i offset
-    offset=$(( __HACKFM_ACTIVE_LAYER * 10 ))
+    offset=$(( $(main_fkeybar.active_layer) * 10 ))
     __FKEYBAR_LABELS=()
     for ((i=1; i<=10; i++)); do
         local key="F$(( i + offset ))"
@@ -144,16 +144,18 @@ fkeybar.layer_count() {
 }
 
 fkeybar.layer_next() {
-    local total
+    local total current
     total=$(fkeybar.layer_count)
-    __HACKFM_ACTIVE_LAYER=$(( (__HACKFM_ACTIVE_LAYER + 1) % total ))
+    current=$(main_fkeybar.active_layer)
+    main_fkeybar.active_layer = $(( (current + 1) % total ))
     draw_main_frame
 }
 
 fkeybar.layer_prev() {
-    local total
+    local total current
     total=$(fkeybar.layer_count)
-    __HACKFM_ACTIVE_LAYER=$(( (__HACKFM_ACTIVE_LAYER - 1 + total) % total ))
+    current=$(main_fkeybar.active_layer)
+    main_fkeybar.active_layer = $(( (current - 1 + total) % total ))
     draw_main_frame
 }
 

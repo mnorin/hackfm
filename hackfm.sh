@@ -77,8 +77,6 @@ trap 'hackfm.cleanup; exit 0' INT TERM
 
 # App state
 ACTIVE_PANEL=0
-PANELS_VISIBLE=1
-TERMINAL_MODE=0
 ORIGINAL_STTY=""
 
 PANELS=("left_panel" "right_panel")
@@ -310,7 +308,7 @@ draw_main_frame() {
     fkeybar.update_labels
     main_fkeybar.row = $__HACKFM_ROWS
     main_fkeybar.width = $__HACKFM_COLS
-    main_fkeybar.render "$__HACKFM_ACTIVE_LAYER" "${__FKEYBAR_LABELS[@]}"
+    main_fkeybar.render
 }
 
 draw_screen() {
@@ -322,11 +320,9 @@ draw_screen() {
     main_title.render
     main_fkeybar.row = $__HACKFM_ROWS
     main_fkeybar.width = $__HACKFM_COLS
-    main_fkeybar.render "$__HACKFM_ACTIVE_LAYER" "${__FKEYBAR_LABELS[@]}"
-    if [ $PANELS_VISIBLE -eq 1 ]; then
-        left_panel.render
-        right_panel.render
-    fi
+    main_fkeybar.render
+    left_panel.render
+    right_panel.render
     draw_command_line
     local cmd_text=$(cmd.text)
     local cmd_row=$(cmd.row)
@@ -375,32 +371,16 @@ execute_command() {
     tui.color.reset
     
     # Execute the command
-    case "$command" in
-        clear)
-            tui.screen.clear
-            ;;
-            
-        exit)
-            echo "(Use F10 to quit file manager)"
-            ;;
-            
-        *)
-            # Change to exec directory first
-            cd "$exec_path"
-            
-            # Show prompt and command
-            echo "$USER@$(hostname):$exec_path\$ $command"
-            
-            trap - ERR
-            set +e
-            eval "$command" 2>&1
-            set -e
-            trap '__ba_err_report $? $LINENO' ERR
-            
-            # Add newline for visual separation
-            echo ""
-            ;;
-    esac
+    cd "$exec_path"
+    echo "$USER@$(hostname):$exec_path\$ $command"
+
+    trap - ERR
+    set +e
+    eval "$command" 2>&1
+    set -e
+    trap '__ba_err_report $? $LINENO' ERR
+
+    echo ""
     
     # Check if directory changed and update panel
     local new_path=$(pwd)
@@ -408,8 +388,6 @@ execute_command() {
         $list.path = "$new_path"
     fi
     
-    # Return to panels immediately
-    PANELS_VISIBLE=1
     stty -echo 2>/dev/null
     tui.screen.alt
     hackfm.read_term_size
@@ -652,28 +630,13 @@ main_loop() {
 
             # Ctrl+O - toggle between File Manager and Terminal view
             CTRL-O)
-                PANELS_VISIBLE=$((1 - PANELS_VISIBLE))
-                # Switch screens and redraw if needed
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    # Switching to panels - use alternate screen
-                    TERMINAL_MODE=0
-                    tui.screen.alt
-                    draw_screen
-                else
-                    # Switching to terminal - use main screen, enter persistent mode
-                    TERMINAL_MODE=1
-                    tui.screen.main
-                    
-                    # Show cursor for terminal
-                    tui.cursor.show
-                    
-                    # Restore terminal to sane interactive mode
-                    stty sane
-                    
-                    # Spawn a real interactive bash with Ctrl+O bound to exit silently
-                    trap - ERR
-                    set +e
-                    bash --rcfile <(cat <<'RCFILE'
+                tui.screen.main
+                tui.cursor.show
+                stty sane
+
+                trap - ERR
+                set +e
+                bash --rcfile <(cat <<'RCFILE'
 # Source user's bashrc if it exists
 if [ -f ~/.bashrc ]; then
     source ~/.bashrc
@@ -684,20 +647,14 @@ __hackfm_exit() { exit; }
 bind -x '"\C-o": __hackfm_exit'
 RCFILE
 ) -i < /dev/tty > /dev/tty 2>&1 || true
-                    set -e
-                    trap '__ba_err_report $? $LINENO' ERR
-                    
-                    # When bash exits, return to panels
-                    PANELS_VISIBLE=1
-                    TERMINAL_MODE=0
+                set -e
+                trap '__ba_err_report $? $LINENO' ERR
 
-                    stty -echo 2>/dev/null
-                    tui.screen.alt
-                    hackfm.read_term_size
-                    reload_both_panels
-                    draw_screen
-                    # Cursor is hidden by draw_screen
-                fi
+                stty -echo 2>/dev/null
+                tui.screen.alt
+                hackfm.read_term_size
+                reload_both_panels
+                draw_screen
                 ;;
                 
             # INSERT - toggle selection and move down
@@ -727,9 +684,11 @@ RCFILE
             # Regular printable characters - type into command line
             *)
                 # Translate F1-F12 physical keys to logical keys based on active layer
-                if [[ "$key" =~ ^F([1-9])$ ]] && [ $__HACKFM_ACTIVE_LAYER -gt 0 ]; then
+                local _active_layer
+                _active_layer=$(main_fkeybar.active_layer)
+                if [[ "$key" =~ ^F([1-9])$ ]] && [ $_active_layer -gt 0 ]; then
                     local _fnum="${key#F}"
-                    key="F$(( _fnum + __HACKFM_ACTIVE_LAYER * 10 ))"
+                    key="F$(( _fnum + _active_layer * 10 ))"
                 fi
                 # Check module-registered keys first (guard against keys with dots/invalid chars)
                 local _dispatched=0
