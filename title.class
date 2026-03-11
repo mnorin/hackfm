@@ -1,0 +1,72 @@
+#!/bin/bash
+# title.class - Title bar component using ba.sh
+
+declare -Ag __TITLE___properties=()
+
+__TITLE__.property() {
+    if [ "$2" = "=" ]; then
+        __TITLE___properties[$1]="$3"
+    else
+        echo "${__TITLE___properties[$1]}"
+    fi
+}
+
+__TITLE__.width() {
+    if [ "$1" = "=" ]; then
+        __TITLE__.property width = "$2"
+    else
+        __TITLE__.property width
+    fi
+}
+
+__TITLE__.text_left() {
+    if [ "$1" = "=" ]; then
+        __TITLE__.property text_left = "$2"
+    else
+        __TITLE__.property text_left
+    fi
+}
+
+__TITLE__.text_right() {
+    if [ "$1" = "=" ]; then
+        __TITLE__.property text_right = "$2"
+    else
+        __TITLE__.property text_right
+    fi
+}
+
+# Read-only — derived from text_left and text_right at render time
+__TITLE__.text() {
+    local left=$(__TITLE__.property text_left)
+    local right=$(__TITLE__.property text_right)
+    local width=$(__TITLE__.property width)
+    if [ -z "$right" ]; then
+        echo "$left"
+    elif [ -z "$left" ]; then
+        echo "$right"
+    else
+        local left_len=${#left}
+        local right_len=${#right}
+        local gap=$(( width - left_len - right_len - 2 ))
+        if [ $gap -lt 1 ]; then gap=1; fi
+        printf '%s%*s%s' "$left" $gap '' "$right"
+    fi
+}
+
+__TITLE__.render() {
+    local text=$(__TITLE__.text)
+    local width=$(__TITLE__.width)
+    tui.cursor.move 1 1
+    tui.color.black
+    tui.color.bg_cyan
+    printf " %-$(( width - 2 ))s " "$text"
+    tui.color.reset
+}
+
+# Broker subscriber — updates text_left from title.update topic
+__TITLE__.on_title_update() {
+    __TITLE__.text_left = "$2"
+    __TITLE__.width = $__HACKFM_COLS
+    __TITLE__.render
+}
+__TITLE__.on_title_update.process_message() { __TITLE__.on_title_update "$@"; }
