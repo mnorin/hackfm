@@ -280,17 +280,15 @@ init() {
 # RENDERING
 # ============================================================================
 
-# Redraw panels only (no frame, no command line) - used by menu
-redraw_panels_only() {
-    left_panel.render
-    right_panel.render
-}
-
 # Redraw only panels that overlap the last dropdown area
 redraw_panels_for_dropdown() {
     local drop_col=$(main_menu.last_dropdown_col)
     local drop_right=$(main_menu.last_dropdown_right)
-    [ -z "$drop_col" ] && { redraw_panels_only; return; }
+    if [ -z "$drop_col" ]; then
+        left_panel.render
+        right_panel.render
+        return
+    fi
 
     local lx=$(left_panel.x)
     local lright=$((lx + $(left_panel.width) + 1))
@@ -430,7 +428,6 @@ switch_panel() {
     local new_panel=$(get_active_panel)
     $old_panel.active = 0
     $new_panel.active = 1
-    draw_main_frame
 }
 
 # Navigate
@@ -450,31 +447,20 @@ open_item() {
         local filepath="${action#*:}"
         openhandler.open "$filepath"
     fi
-    draw_main_frame
 }
 
 # ============================================================================
 # MENU
 # ============================================================================
 
-# Sort handlers for left panel
-# Sort panel by field - toggles between asc/desc. Args: panel field_asc field_desc
-_sort_panel() {
-    local panel="$1" asc="$2" desc="$3"
-    local current=$($panel.list.sort_order)
-    [ "$current" = "$asc" ] && $panel.list.sort_order = "$desc" || $panel.list.sort_order = "$asc"
-    $panel.prerender_all_rows
-    $panel.render
-}
-
-handler_sort_left_name()  { _sort_panel left_panel  name_asc  name_desc; }
-handler_sort_left_date()  { _sort_panel left_panel  date_desc date_asc;  }
-handler_sort_left_size()  { _sort_panel left_panel  size_desc size_asc;  }
-handler_sort_left_ext()   { _sort_panel left_panel  ext_asc   ext_desc;  }
-handler_sort_right_name() { _sort_panel right_panel name_asc  name_desc; }
-handler_sort_right_date() { _sort_panel right_panel date_desc date_asc;  }
-handler_sort_right_size() { _sort_panel right_panel size_desc size_asc;  }
-handler_sort_right_ext()  { _sort_panel right_panel ext_asc   ext_desc;  }
+handler_sort_left_name()  { left_panel.sort name; }
+handler_sort_left_date()  { left_panel.sort date; }
+handler_sort_left_size()  { left_panel.sort size; }
+handler_sort_left_ext()   { left_panel.sort ext;  }
+handler_sort_right_name() { right_panel.sort name; }
+handler_sort_right_date() { right_panel.sort date; }
+handler_sort_right_size() { right_panel.sort size; }
+handler_sort_right_ext()  { right_panel.sort ext;  }
 
 setup_menu() {
     main_menu.background_redraw = "redraw_panels_for_dropdown"
@@ -521,6 +507,7 @@ hackfm.quit() {
 }
 
 show_menu() {
+    broker.publish "ui.menu_opened" ""
     main_menu.show
 
     local handler
@@ -532,7 +519,6 @@ show_menu() {
         fi
     fi
 
-    main_title.width = $__HACKFM_COLS
     main_title.render
     broker.publish "ui.menu_closed" ""
 }
@@ -557,25 +543,11 @@ main_loop() {
         case "$key" in
             # Navigation keys - behavior depends on context
             UP)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    # In File Manager workspace - always navigate files
-                    navigate UP
-                else
-                    # In buffer mode - navigate command history
-                    cmd.history_prev
-                    draw_command_line
-                fi
+                navigate UP
                 ;;
                 
             DOWN)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    # In File Manager workspace - always navigate files
-                    navigate DOWN
-                else
-                    # In buffer mode - navigate command history
-                    cmd.history_next
-                    draw_command_line
-                fi
+                navigate DOWN
                 ;;
 
             CTRL-UP)
@@ -589,44 +561,30 @@ main_loop() {
                 ;;
                 
             PAGEUP)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    navigate PAGEUP
-                fi
+                navigate PAGEUP
                 ;;
                 
             PAGEDOWN)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    navigate PAGEDOWN
-                fi
+                navigate PAGEDOWN
                 ;;
                 
             HOME)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    if [ $has_cmdline_text -eq 1 ]; then
-                        cmd.move_cursor HOME
-                        draw_command_line
-                    else
-                        navigate HOME
-                        $(get_active_panel).render
-                    fi
-                elif [ $has_cmdline_text -eq 1 ]; then
+                if [ $has_cmdline_text -eq 1 ]; then
                     cmd.move_cursor HOME
                     draw_command_line
+                else
+                    navigate HOME
+                    $(get_active_panel).render
                 fi
                 ;;
                 
             END)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    if [ $has_cmdline_text -eq 1 ]; then
-                        cmd.move_cursor END
-                        draw_command_line
-                    else
-                        navigate END
-                        $(get_active_panel).render
-                    fi
-                elif [ $has_cmdline_text -eq 1 ]; then
+                if [ $has_cmdline_text -eq 1 ]; then
                     cmd.move_cursor END
                     draw_command_line
+                else
+                    navigate END
+                    $(get_active_panel).render
                 fi
                 ;;
                 
@@ -647,14 +605,10 @@ main_loop() {
             # ENTER key - smart behavior
             ENTER)
                 if [ $has_cmdline_text -eq 1 ]; then
-                    # Command line has text - execute command
                     execute_command
                     draw_screen
-                elif [ $PANELS_VISIBLE -eq 1 ]; then
-                    # Command line empty and panels visible - navigate
+                else
                     open_item
-                    # Panel renders itself for directory navigation
-                    # draw_screen only called for file execution (inside open_item)
                 fi
                 ;;
                 
@@ -676,11 +630,8 @@ main_loop() {
                 
             # Ctrl+R - reload active panel
             CTRL-R)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    reload_active_panel
-                    local active_panel=$(get_active_panel)
-                    $active_panel.render
-                fi
+                reload_active_panel
+                $(get_active_panel).render
                 ;;
 
             # Ctrl+U - clear command line (standard shell behavior)
@@ -691,18 +642,13 @@ main_loop() {
                 
             # Tab - switch panels (only in panel mode with empty cmdline)
             TAB)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    switch_panel
-                    draw_command_line  # Update prompt with new active path
-                fi
+                switch_panel
+                draw_command_line
                 ;;
                 
             # Ctrl+S - Quick search
             CTRL-S)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    local active_panel=$(get_active_panel)
-                    $active_panel.quick_search
-                fi
+                $(get_active_panel).quick_search
                 ;;
 
             # Ctrl+O - toggle between File Manager and Terminal view
@@ -757,9 +703,7 @@ RCFILE
                 
             # INSERT - toggle selection and move down
             INSERT)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    $(get_active_panel).toggle_selection_and_move
-                fi
+                $(get_active_panel).toggle_selection_and_move
                 ;;
                 
             CTRL-SLASH)
@@ -777,10 +721,8 @@ RCFILE
 
             # ESC - clear command line
             ESC)
-                if [ $PANELS_VISIBLE -eq 1 ]; then
-                    cmd.clear
-                    draw_command_line
-                fi
+                cmd.clear
+                draw_command_line
                 ;;
                 
             # Regular printable characters - type into command line
@@ -792,7 +734,7 @@ RCFILE
                 fi
                 # Check module-registered keys first (guard against keys with dots/invalid chars)
                 local _dispatched=0
-                if [ $PANELS_VISIBLE -eq 1 ] && [ $has_cmdline_text -eq 0 ]; then
+                if [ $has_cmdline_text -eq 0 ]; then
                     fkeybar.dispatch_key "$key" && _dispatched=1 || true
                 fi
                 if [ $_dispatched -eq 0 ] && [ ${#key} -eq 1 ] && [[ $key != $'\x1b' ]] && [[ $key != $'\x00' ]]; then
