@@ -219,7 +219,8 @@ __VIEWER__.show(){
     __VIEWER___title.render
     __VIEWER___fkeybar.row = $rows
     __VIEWER___fkeybar.width = $cols
-    __VIEWER___fkeybar.render 0 "Help" "" "Quit" "" "" "" "" "" "" "Quit"
+    __FKEYBAR_LABELS=("Help" "" "Quit" "" "" "" "" "" "" "Quit")
+    __VIEWER___fkeybar.render
 
     # Disable line wrap and lock scroll region to content area only.
     # This means no stray output or implicit terminal scroll can ever touch

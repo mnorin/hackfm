@@ -323,7 +323,7 @@ draw_screen() {
     main_fkeybar.render
     left_panel.render
     right_panel.render
-    draw_command_line
+    cmd.render
     local cmd_text=$(cmd.text)
     local cmd_row=$(cmd.row)
     local cmd_prompt=$(cmd.prompt)
@@ -331,11 +331,6 @@ draw_screen() {
     local cursor_col=$((prompt_len + ${#cmd_text} + 1))
     tui.cursor.move $cmd_row $cursor_col
     tui.cursor.show
-}
-
-# Draw command line (just above F-key bar)
-draw_command_line() {
-    cmd.render
 }
 
 # ============================================================================
@@ -502,8 +497,6 @@ show_menu() {
 
 # Main loop
 main_loop() {
-    # Signal that we're in main loop (for resize handler)
-    IN_MAIN_LOOP=1
     
     draw_screen
     
@@ -529,12 +522,12 @@ main_loop() {
 
             CTRL-UP)
                 cmd.history_prev
-                draw_command_line
+                cmd.render
                 ;;
 
             CTRL-DOWN)
                 cmd.history_next
-                draw_command_line
+                cmd.render
                 ;;
                 
             PAGEUP)
@@ -548,34 +541,32 @@ main_loop() {
             HOME)
                 if [ $has_cmdline_text -eq 1 ]; then
                     cmd.move_cursor HOME
-                    draw_command_line
+                    cmd.render
                 else
                     navigate HOME
-                    $(get_active_panel).render
                 fi
                 ;;
                 
             END)
                 if [ $has_cmdline_text -eq 1 ]; then
                     cmd.move_cursor END
-                    draw_command_line
+                    cmd.render
                 else
                     navigate END
-                    $(get_active_panel).render
                 fi
                 ;;
                 
             LEFT)
                 if [ $has_cmdline_text -eq 1 ]; then
                     cmd.move_cursor LEFT
-                    draw_command_line
+                    cmd.render
                 fi
                 ;;
                 
             RIGHT)
                 if [ $has_cmdline_text -eq 1 ]; then
                     cmd.move_cursor RIGHT
-                    draw_command_line
+                    cmd.render
                 fi
                 ;;
                 
@@ -593,7 +584,7 @@ main_loop() {
             BACKSPACE)
                 if [ $has_cmdline_text -eq 1 ]; then
                     cmd.delete
-                    draw_command_line
+                    cmd.render
                 fi
                 ;;
                 
@@ -601,7 +592,7 @@ main_loop() {
             DELETE)
                 if [ $has_cmdline_text -eq 1 ]; then
                     cmd.delete_forward
-                    draw_command_line
+                    cmd.render
                 fi
                 ;;
                 
@@ -614,13 +605,13 @@ main_loop() {
             # Ctrl+U - clear command line (standard shell behavior)
             CTRL-U)
                 cmd.clear
-                draw_command_line
+                cmd.render
                 ;;
                 
             # Tab - switch panels (only in panel mode with empty cmdline)
             TAB)
                 switch_panel
-                draw_command_line
+                cmd.render
                 ;;
                 
             # Ctrl+S - Quick search
@@ -671,16 +662,10 @@ RCFILE
                 fname="${fname//$'\r'/}"
                 if [ -n "$fname" ]; then
                     cmd.append "$fname"
-                    draw_command_line
+                    cmd.render
                 fi
                 ;;
 
-            # ESC - clear command line
-            ESC)
-                cmd.clear
-                draw_command_line
-                ;;
-                
             # Regular printable characters - type into command line
             *)
                 # Translate F1-F12 physical keys to logical keys based on active layer
@@ -697,27 +682,12 @@ RCFILE
                 fi
                 if [ $_dispatched -eq 0 ] && [ ${#key} -eq 1 ] && [[ $key != $'\x1b' ]] && [[ $key != $'\x00' ]]; then
                     cmd.insert "$key"
-                    draw_command_line
+                    cmd.render
                 fi
                 ;;
         esac
 
-        # Always return terminal cursor to command line input position
-        local _cmd_row=$(cmd.row)
-        local _cmd_col=$(cmd.col)
-        local _cmd_prompt=$(cmd.prompt)
-        local _cmd_text=$(cmd.text)
-        local _cmd_cursor=$(cmd.cursor_pos)
-        local _cmd_width=$(cmd.width)
-        local _prompt_len=${#_cmd_prompt}
-        local _text_width=$((_cmd_width - _prompt_len))
-        local _display_cursor=$_cmd_cursor
-        if [ ${#_cmd_text} -gt $_text_width ] && [ $_cmd_cursor -ge $_text_width ]; then
-            _display_cursor=$((_text_width - 1))
-        fi
-        tui.cursor.move $_cmd_row $((_cmd_col + _prompt_len + _display_cursor))
-        tui.cursor.style.blinking_underline
-        tui.cursor.show
+        cmd.focus
     done
 }
 
