@@ -124,7 +124,8 @@ __EDITOR__.draw_status(){
 __EDITOR__.draw_help(){
     __EDITOR___fkeybar.row = $EDITOR_ROWS
     __EDITOR___fkeybar.width = $EDITOR_COLS
-    __EDITOR___fkeybar.render 0 "Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit"
+    __FKEYBAR_LABELS=("Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit")
+    __EDITOR___fkeybar.render
 }
 
 # Draw context - populated once by _prepare_draw_ctx, read by draw_line.

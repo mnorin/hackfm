@@ -17,9 +17,8 @@ __FKEYBAR__.row(){          __FKEYBAR__.property row          "$@"; }
 __FKEYBAR__.width(){        __FKEYBAR__.property width        "$@"; }
 __FKEYBAR__.active_layer(){ __FKEYBAR__.property active_layer "$@"; }
 
-# Render function key bar
+# Render function key bar using __FKEYBAR_LABELS
 __FKEYBAR__.render(){
-    fkeybar.update_labels
     local layer=$(__FKEYBAR__.active_layer)
     local row=$(__FKEYBAR__.row)
     local width=$(__FKEYBAR__.width)
@@ -31,12 +30,10 @@ __FKEYBAR__.render(){
 
     tui.cursor.move $row 1
 
-    # Layer indicator: "L0" etc, white on black, 2 chars
     tui.color.white
     tui.color.bg_black
     printf "L%s" "$layer"
 
-    # 10 fkey slots filling remaining width
     local remaining=$(( width - 2 ))
     local key_width=$(( remaining / 10 ))
 
@@ -44,7 +41,6 @@ __FKEYBAR__.render(){
         local num=$(( i + 1 ))
         local label="${labels[$i]}"
 
-        # Key number: white on black
         tui.color.white
         tui.color.bg_black
         if [ $num -lt 10 ]; then
@@ -53,7 +49,6 @@ __FKEYBAR__.render(){
             printf "%s" "$num"
         fi
 
-        # Label: black on cyan
         tui.color.black
         tui.color.bg_cyan
         printf "%-$(( key_width - 2 ))s" "$label"
@@ -88,9 +83,6 @@ fkeybar.register_key() {
     fi
 }
 
-# Register a dynamic label callback for a key.
-# The callback sets __HACKFM_FKEY_LABEL to claim the label, or leaves it empty to pass.
-# Usage: fkeybar.register_key_label KEY FUNC
 fkeybar.register_key_label() {
     local key="$1"
     local func="$2"
@@ -101,7 +93,7 @@ fkeybar.register_key_label() {
     fi
 }
 
-# Recompute __FKEYBAR_LABELS for the current layer
+# Recompute __FKEYBAR_LABELS from registered keys for the current layer
 fkeybar.update_labels() {
     local i offset
     offset=$(( $(main_fkeybar.active_layer) * 10 ))
