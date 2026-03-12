@@ -453,16 +453,12 @@ __FILELIST__.find_and_select(){
         local entry=$(__FILELIST__.get $i)
         local name="${entry%%|*}"
         if [ "$name" = "$target_name" ]; then
-            # Found it - select and adjust scroll
+            # Found it - select and center vertically
             __FILELIST__.selected = $i
-            
-            # Adjust scroll to make it visible
-            local scroll=$(__FILELIST__.scroll)
-            if [ $i -lt $scroll ]; then
-                scroll=$i
-            elif [ $i -ge $((scroll + max_visible)) ]; then
-                scroll=$((i - max_visible + 1))
-            fi
+            local scroll=$(( i - max_visible / 2 ))
+            [ $scroll -lt 0 ] && scroll=0
+            [ $scroll -gt $(( count - max_visible )) ] && scroll=$(( count - max_visible ))
+            [ $scroll -lt 0 ] && scroll=0
             __FILELIST__.scroll = $scroll
             return 0
         fi
@@ -607,6 +603,16 @@ __FILELIST__.selection_info(){
     done
     
     echo "$selected_count|$total_bytes"
+}
+
+# Clear all selections
+__FILELIST__.clear_selection(){
+    local count=${#__FILELIST___files[@]}
+    for ((i=0; i<count; i++)); do
+        __FILELIST___marked[$i]="0"
+    done
+    __FILELIST__.property marked_count = 0
+    __FILELIST__.property marked_size = 0
 }
 
 # Check if filename is special (.. or <empty>)

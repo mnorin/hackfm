@@ -264,18 +264,33 @@ __PANEL__.update_rendered_row(){
 # Toggle selection and move down
 __PANEL__.toggle_selection_and_move(){
     local list=$(__PANEL__.list_source)
-    
+
     # Get position before toggle
     local old_pos=$($list.selected)
-    
-    # Toggle selection
+    local old_scroll=$($list.scroll)
+
+    # Toggle selection — update cache immediately so render_row_string sees new state
     $list.toggle_selection
-    
-    # Update the row that was toggled
-    __PANEL__.update_rendered_row $old_pos
-    
+    __PANEL___rendered_rows[$old_pos]=$(__PANEL__.render_row_string $old_pos)
+
     # Move down
     __PANEL__.navigate DOWN
+
+    # If navigate was a no-op (at last item), paint the toggled row ourselves
+    local new_pos=$($list.selected)
+    local new_scroll=$($list.scroll)
+    if [ $old_pos -eq $new_pos ] && [ $old_scroll -eq $new_scroll ]; then
+        local x=$(__PANEL__.x)
+        local y=$(__PANEL__.y)
+        local height=$(__PANEL__.height)
+        local visible_row=$(( old_pos - old_scroll ))
+        local max_visible=$(( height - 3 ))
+        if [ $visible_row -ge 0 ] && [ $visible_row -lt $max_visible ]; then
+            tui.cursor.move $((y + 1 + visible_row)) $((x + 1))
+            printf '%b' "${__PANEL___rendered_rows[$old_pos]}"
+        fi
+        __PANEL__.draw_info_bar
+    fi
 }
 
 # Property accessors
@@ -306,12 +321,20 @@ __PANEL__.register(){
     $broker.subscribe "dialog_closed" "__PANEL__"
     $broker.subscribe "viewer_closed" "__PANEL__"
     $broker.subscribe "editor_closed" "__PANEL__"
+    $broker.subscribe "selection.clear" "__PANEL__"
 }
 
 __PANEL__.process_message(){
     local topic="$1"
     case "$topic" in
         dialog_closed|viewer_closed|editor_closed)
+            __PANEL__.render
+            ;;
+        selection.clear)
+            [ "$(__PANEL__.active)" != "1" ] && return
+            local list=$(__PANEL__.list_source)
+            $list.clear_selection
+            __PANEL__.prerender_all_rows
             __PANEL__.render
             ;;
     esac
@@ -1038,6 +1061,10 @@ __PANEL__._exit_archive(){
     # Clear archive mode flags
     __PANEL__.in_archive = 0
     __PANEL__.archive_path = ""
+
+    # Clear any selection that was made inside the archive
+    local list=$(__PANEL__.list_source)
+    $list.clear_selection
 
     # Pre-render
     __PANEL__.prerender_all_rows
