@@ -187,6 +187,7 @@ __VIEWER___search_whole=0
 
 __VIEWER__._search_draw_all(){
     local dr=$1 dc=$2 dw=$3 dh=$4 pattern=$5 case_s=$6 back_s=$7 whole_s=$8 focus=$9
+    local cursor_pos=${10:-${#pattern}}
     local inner=$(( dw - 4 ))
 
     # Input field
@@ -196,8 +197,9 @@ __VIEWER__._search_draw_all(){
     else
         tui.color.bg_white; tui.color.black
     fi
-    local display_pat="$pattern"
-    [ ${#pattern} -gt $inner ] && display_pat="${pattern: -$inner}"
+    local display_start=0
+    [ $cursor_pos -ge $inner ] && display_start=$(( cursor_pos - inner + 1 ))
+    local display_pat="${pattern:$display_start:$inner}"
     printf " %-${inner}s" "$display_pat"
     tui.color.reset
 
@@ -241,7 +243,7 @@ __VIEWER__._search_draw_all(){
 
     # Cursor in input
     if [ $focus -eq 0 ]; then
-        local cur_col=$(( dc + 2 + ${#display_pat} + 1 ))
+        local cur_col=$(( dc + 2 + (cursor_pos - display_start) + 1 ))
         tui.cursor.move $((dr + 3)) $cur_col
     fi
 }
@@ -290,8 +292,9 @@ __VIEWER__._search_dialog(){
     local back_s=$__VIEWER___search_backwards
     local whole_s=$__VIEWER___search_whole
     local focus=0
+    local cursor_pos=${#pattern}
 
-    __VIEWER__._search_draw_all $dr $dc $dw $dh "$pattern" $case_s $back_s $whole_s $focus
+    __VIEWER__._search_draw_all $dr $dc $dw $dh "$pattern" $case_s $back_s $whole_s $focus $cursor_pos
     tui.cursor.show
 
     local key
@@ -305,10 +308,24 @@ __VIEWER__._search_dialog(){
                 focus=$(( (focus + 5) % 6 ))
                 ;;
             LEFT)
-                if [ $focus -eq 5 ]; then focus=4; fi
+                if [ $focus -eq 0 ]; then
+                    [ $cursor_pos -gt 0 ] && cursor_pos=$(( cursor_pos - 1 ))
+                elif [ $focus -eq 5 ]; then
+                    focus=4
+                fi
                 ;;
             RIGHT)
-                if [ $focus -eq 4 ]; then focus=5; fi
+                if [ $focus -eq 0 ]; then
+                    [ $cursor_pos -lt ${#pattern} ] && cursor_pos=$(( cursor_pos + 1 ))
+                elif [ $focus -eq 4 ]; then
+                    focus=5
+                fi
+                ;;
+            HOME)
+                [ $focus -eq 0 ] && cursor_pos=0
+                ;;
+            END)
+                [ $focus -eq 0 ] && cursor_pos=${#pattern}
                 ;;
             SPACE)
                 [ $focus -eq 1 ] && case_s=$(( 1 - case_s ))
@@ -337,15 +354,24 @@ __VIEWER__._search_dialog(){
                 return 1
                 ;;
             BACKSPACE)
-                [ ${#pattern} -gt 0 ] && pattern="${pattern%?}"
+                if [ $focus -eq 0 ] && [ $cursor_pos -gt 0 ]; then
+                    pattern="${pattern:0:$((cursor_pos-1))}${pattern:$cursor_pos}"
+                    cursor_pos=$(( cursor_pos - 1 ))
+                fi
+                ;;
+            DELETE)
+                if [ $focus -eq 0 ] && [ $cursor_pos -lt ${#pattern} ]; then
+                    pattern="${pattern:0:$cursor_pos}${pattern:$((cursor_pos+1))}"
+                fi
                 ;;
             *)
                 if [ ${#key} -eq 1 ] && [ $focus -eq 0 ]; then
-                    pattern="${pattern}${key}"
+                    pattern="${pattern:0:$cursor_pos}${key}${pattern:$cursor_pos}"
+                    cursor_pos=$(( cursor_pos + 1 ))
                 fi
                 ;;
         esac
-        __VIEWER__._search_draw_all $dr $dc $dw $dh "$pattern" $case_s $back_s $whole_s $focus
+        __VIEWER__._search_draw_all $dr $dc $dw $dh "$pattern" $case_s $back_s $whole_s $focus $cursor_pos
     done
 }
 

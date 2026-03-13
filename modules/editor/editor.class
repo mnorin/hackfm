@@ -33,6 +33,10 @@ declare -ag __EDITOR___lines=()
 # Clipboard buffer
 declare -ag __EDITOR___clipboard=()
 
+# Search state
+__EDITOR___search_pattern=""
+__EDITOR___search_case=1      # 1=case sensitive 0=insensitive
+
 # Terminal dimensions
 EDITOR_ROWS=24
 EDITOR_COLS=80
@@ -80,6 +84,353 @@ __EDITOR__.load(){
     fi
 }
 
+# Search dialog — input field + Case sensitive checkbox
+# Returns 0=search 1=cancel. Sets __EDITOR___search_pattern, __EDITOR___search_case
+__EDITOR__._search_dialog(){
+    local rows=$1 cols=$2
+    local dw=52 dh=9
+    local dr=$(( (rows - dh) / 2 ))
+    local dc=$(( (cols - dw) / 2 ))
+    local r
+
+    tui.cursor.hide
+
+    # Shadow
+    tui.color.bg_black
+    for ((r=dr+1; r<dr+dh+1; r++)); do
+        tui.cursor.move $r $(( dc + 2 ))
+        printf "%${dw}s" ""
+    done
+    tui.color.reset
+
+    # Background + border + title
+    tui.color.bg_white; tui.color.black
+    for ((r=dr; r<dr+dh; r++)); do
+        tui.cursor.move $r $dc
+        printf "%${dw}s" ""
+    done
+    tui.color.bg_white; tui.color.black
+    tui.box.draw $dr $dc $dw $dh
+    tui.cursor.move $dr $(( dc + 2 ))
+    tui.color.bg_white; tui.color.black
+    printf " Search "
+    tui.color.reset
+
+    # Label
+    tui.cursor.move $(( dr + 2 )) $(( dc + 2 ))
+    tui.color.bg_white; tui.color.black
+    printf "Search for:"
+    tui.color.reset
+
+    local pattern="$__EDITOR___search_pattern"
+    local case_s=$__EDITOR___search_case
+    local focus=0  # 0=input 1=case checkbox 2=OK 3=Cancel
+    local inner=$(( dw - 4 ))
+    local cursor_pos=${#pattern}
+
+    tui.cursor.show
+
+    local key
+    while true; do
+        # Input field — show window around cursor_pos
+        tui.cursor.move $(( dr + 3 )) $(( dc + 2 ))
+        if [ $focus -eq 0 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        local display_start=0
+        [ $cursor_pos -ge $inner ] && display_start=$(( cursor_pos - inner + 1 ))
+        local display_pat="${pattern:$display_start:$inner}"
+        printf " %-${inner}s" "$display_pat"
+        tui.color.reset
+
+        # Case sensitive checkbox
+        tui.cursor.move $(( dr + 5 )) $(( dc + 4 ))
+        if [ $focus -eq 1 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        local mark=" "; [ $case_s -eq 1 ] && mark="X"
+        printf "[%s] Case sensitive" "$mark"
+        tui.color.reset
+
+        # Buttons
+        tui.cursor.move $(( dr + dh - 2 )) $(( dc + dw/2 - 9 ))
+        if [ $focus -eq 2 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[< OK >]"
+        tui.color.reset
+        tui.color.bg_white; tui.color.black; printf "   "
+        if [ $focus -eq 3 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[ Cancel ]"
+        tui.color.reset
+
+        # Cursor in input field
+        if [ $focus -eq 0 ]; then
+            local cur_col=$(( dc + 2 + (cursor_pos - display_start) + 1 ))
+            tui.cursor.move $(( dr + 3 )) $cur_col
+            tui.cursor.show
+        else
+            tui.cursor.hide
+        fi
+
+        key=$(tui.input.key 2>&1) || continue
+        case "$key" in
+            TAB|DOWN)
+                focus=$(( (focus + 1) % 4 ))
+                ;;
+            SHIFT-TAB|UP)
+                focus=$(( (focus + 3) % 4 ))
+                ;;
+            LEFT)
+                if [ $focus -eq 0 ]; then
+                    [ $cursor_pos -gt 0 ] && cursor_pos=$(( cursor_pos - 1 ))
+                elif [ $focus -eq 3 ]; then
+                    focus=2
+                fi
+                ;;
+            RIGHT)
+                if [ $focus -eq 0 ]; then
+                    [ $cursor_pos -lt ${#pattern} ] && cursor_pos=$(( cursor_pos + 1 ))
+                elif [ $focus -eq 2 ]; then
+                    focus=3
+                fi
+                ;;
+            HOME)
+                [ $focus -eq 0 ] && cursor_pos=0
+                ;;
+            END)
+                [ $focus -eq 0 ] && cursor_pos=${#pattern}
+                ;;
+            SPACE)
+                [ $focus -eq 1 ] && case_s=$(( 1 - case_s ))
+                ;;
+            ENTER)
+                if [ $focus -eq 3 ]; then
+                    tui.cursor.hide; return 1
+                elif [ $focus -eq 1 ]; then
+                    case_s=$(( 1 - case_s ))
+                else
+                    __EDITOR___search_pattern="$pattern"
+                    __EDITOR___search_case=$case_s
+                    tui.cursor.hide; return 0
+                fi
+                ;;
+            ESC)
+                tui.cursor.hide; return 1
+                ;;
+            BACKSPACE)
+                if [ $focus -eq 0 ] && [ $cursor_pos -gt 0 ]; then
+                    pattern="${pattern:0:$((cursor_pos-1))}${pattern:$cursor_pos}"
+                    cursor_pos=$(( cursor_pos - 1 ))
+                fi
+                ;;
+            DELETE)
+                if [ $focus -eq 0 ] && [ $cursor_pos -lt ${#pattern} ]; then
+                    pattern="${pattern:0:$cursor_pos}${pattern:$((cursor_pos+1))}"
+                fi
+                ;;
+            *)
+                if [ ${#key} -eq 1 ] && [ $focus -eq 0 ]; then
+                    pattern="${pattern:0:$cursor_pos}${key}${pattern:$cursor_pos}"
+                    cursor_pos=$(( cursor_pos + 1 ))
+                fi
+                ;;
+        esac
+    done
+}
+
+# Search for pattern starting from (start_row, start_col), forward only
+# Sets cursor to found position, returns 0 if found 1 if not
+__EDITOR__._search_exec(){
+    local start_row=$1
+    local start_col=$2
+    local pattern="$__EDITOR___search_pattern"
+    [ -z "$pattern" ] && return 1
+
+    local grep_flags="-n"
+    [ $__EDITOR___search_case -eq 0 ] && grep_flags="$grep_flags -i"
+
+    local total=${#__EDITOR___lines[@]}
+    local row col found_row=-1 found_col=-1
+
+    # Search from start_col+1 on start_row, then remaining rows
+    for ((row=start_row; row<total; row++)); do
+        local line="${__EDITOR___lines[$row]}"
+        local search_in="$line"
+        local col_offset=0
+        if [ $row -eq $start_row ]; then
+            search_in="${line:$((start_col + 1))}"
+            col_offset=$(( start_col + 1 ))
+        fi
+        local match
+        if [ $__EDITOR___search_case -eq 1 ]; then
+            match=$(echo "$search_in" | grep -bo -- "$pattern" 2>/dev/null | head -1)
+        else
+            match=$(echo "$search_in" | grep -ibo -- "$pattern" 2>/dev/null | head -1)
+        fi
+        if [ -n "$match" ]; then
+            found_row=$row
+            found_col=$(( ${match%%:*} + col_offset ))
+            break
+        fi
+    done
+
+    if [ $found_row -ge 0 ]; then
+        __EDITOR__.cursor_row = $found_row
+        __EDITOR__.cursor_col = $found_col
+        __EDITOR__.adjust_viewport
+        return 0
+    fi
+    return 1
+}
+
+# Search backwards from (start_row, start_col)
+# Sets cursor to found position, returns 0 if found 1 if not
+__EDITOR__._search_exec_backwards(){
+    local start_row=$1
+    local start_col=$2
+    local pattern="$__EDITOR___search_pattern"
+    [ -z "$pattern" ] && return 1
+
+    local total=${#__EDITOR___lines[@]}
+    local row found_row=-1 found_col=-1
+
+    for ((row=start_row; row>=0; row--)); do
+        local line="${__EDITOR___lines[$row]}"
+        local search_in="$line"
+        if [ $row -eq $start_row ] && [ $start_col -gt 0 ]; then
+            search_in="${line:0:$start_col}"
+        fi
+        # Find last match on this line
+        local match
+        if [ $__EDITOR___search_case -eq 1 ]; then
+            match=$(echo "$search_in" | grep -bo -- "$pattern" 2>/dev/null | tail -1)
+        else
+            match=$(echo "$search_in" | grep -ibo -- "$pattern" 2>/dev/null | tail -1)
+        fi
+        if [ -n "$match" ]; then
+            found_row=$row
+            found_col=${match%%:*}
+            break
+        fi
+    done
+
+    if [ $found_row -ge 0 ]; then
+        __EDITOR__.cursor_row = $found_row
+        __EDITOR__.cursor_col = $found_col
+        __EDITOR__.adjust_viewport
+        return 0
+    fi
+    return 1
+}
+
+# Exit dialog with Save / Discard / Cancel buttons
+# Returns: 0=Save 1=Discard 2=Cancel
+__EDITOR__._exit_dialog(){
+    local size=$(tui.screen.size)
+    local rows=${size% *}
+    local cols=${size#* }
+    local dw=41 dh=6
+    local dr=$(( (rows - dh) / 2 ))
+    local dc=$(( (cols - dw) / 2 ))
+    local r
+
+    tui.cursor.hide
+
+    # Shadow
+    tui.color.bg_black
+    for ((r=dr+1; r<dr+dh+1; r++)); do
+        tui.cursor.move $r $(( dc + 2 ))
+        printf "%${dw}s" ""
+    done
+    tui.color.reset
+
+    # Background + border + title
+    tui.color.bg_white; tui.color.black
+    for ((r=dr; r<dr+dh; r++)); do
+        tui.cursor.move $r $dc
+        printf "%${dw}s" ""
+    done
+    tui.color.bg_white; tui.color.black
+    tui.box.draw $dr $dc $dw $dh
+    tui.cursor.move $dr $(( dc + 2 ))
+    tui.color.bg_white; tui.color.black
+    printf " Unsaved Changes "
+    tui.color.reset
+
+    # Message
+    tui.cursor.move $(( dr + 2 )) $(( dc + 2 ))
+    tui.color.bg_white; tui.color.black
+    printf "%-$((dw - 4))s" "Save changes before exit?"
+    tui.color.reset
+
+    local focus=0  # 0=Save 1=Discard 2=Cancel
+    local key
+    while true; do
+        # Save button (default)
+        tui.cursor.move $(( dr + dh - 2 )) $(( dc + 3 ))
+        if [ $focus -eq 0 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[< Save >]"
+        tui.color.reset
+        tui.color.bg_white; tui.color.black; printf "  "
+
+        # Discard button
+        if [ $focus -eq 1 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[ Discard ]"
+        tui.color.reset
+        tui.color.bg_white; tui.color.black; printf "  "
+
+        # Cancel button
+        if [ $focus -eq 2 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[ Cancel ]"
+        tui.color.reset
+
+        key=$(tui.input.key 2>&1) || continue
+        case "$key" in
+            LEFT|SHIFT-TAB|UP)
+                focus=$(( (focus + 2) % 3 ))
+                ;;
+            RIGHT|TAB|DOWN)
+                focus=$(( (focus + 1) % 3 ))
+                ;;
+            ENTER)
+                return $focus
+                ;;
+            ESC)
+                return 2
+                ;;
+            s|S)
+                return 0
+                ;;
+            d|D)
+                return 1
+                ;;
+        esac
+    done
+}
+
 # Save file
 __EDITOR__.save(){
     local filepath=$(__EDITOR__.filepath)
@@ -124,7 +475,8 @@ __EDITOR__.draw_status(){
 __EDITOR__.draw_help(){
     __EDITOR___fkeybar.row = $EDITOR_ROWS
     __EDITOR___fkeybar.width = $EDITOR_COLS
-    __FKEYBAR_LABELS=("Help" "Save" "Mark" "" "Copy" "Move" "" "DelLn" "" "Quit")
+    __FKEYBAR_LABELS=(  "Help" "Save" "Mark" ""       "Copy" "Move" "Search" "DelLn" ""   "Quit"
+                        ""     ""     ""     ""       ""     ""     "NxtFnd" "PrvFnd" ""  ""     )
     __EDITOR___fkeybar.render
 }
 
@@ -267,6 +619,12 @@ __EDITOR__.adjust_viewport(){
         viewport_left=$((cursor_col - EDITOR_VIEWPORT_WIDTH + 1))
     fi
     
+    # Clamp viewport_top so the last file line never scrolls above the bottom
+    local total_lines=${#__EDITOR___lines[@]}
+    local max_top=$(( total_lines - EDITOR_VIEWPORT_HEIGHT ))
+    [ $max_top -lt 0 ] && max_top=0
+    [ $viewport_top -gt $max_top ] && viewport_top=$max_top
+
     __EDITOR__.viewport_top = $viewport_top
     __EDITOR__.viewport_left = $viewport_left
 }
@@ -705,7 +1063,32 @@ __EDITOR__.show(){
     while true; do
         local key=$(tui.input.key)
 
+        # F-key layer translation
+        if [[ "$key" =~ ^F([1-9][0-2]?)$ ]]; then
+            local _fnum="${BASH_REMATCH[1]}"
+            local _active_layer=$(__EDITOR___fkeybar.active_layer)
+            if [ "$_fnum" -le 12 ] && [ $_active_layer -gt 0 ]; then
+                key="F$(( _fnum + _active_layer * 10 ))"
+            fi
+        fi
+
         case "$key" in
+            CTRL-LEFT)
+                local _cur=$(__EDITOR___fkeybar.active_layer)
+                local _total=$(( ${#__FKEYBAR_LABELS[@]} / 10 ))
+                __EDITOR___fkeybar.active_layer = $(( (_cur - 1 + _total) % _total ))
+                __EDITOR___fkeybar.render
+                __EDITOR__.update_cursor
+                continue
+                ;;
+            CTRL-RIGHT)
+                local _cur=$(__EDITOR___fkeybar.active_layer)
+                local _total=$(( ${#__FKEYBAR_LABELS[@]} / 10 ))
+                __EDITOR___fkeybar.active_layer = $(( (_cur + 1) % _total ))
+                __EDITOR___fkeybar.render
+                __EDITOR__.update_cursor
+                continue
+                ;;
             # Navigation
             UP|DOWN|LEFT|RIGHT|HOME|END)
                 # Save old position
@@ -901,7 +1284,72 @@ __EDITOR__.show(){
                 __EDITOR__.draw_status
                 __EDITOR__.update_cursor
                 ;;
-            
+
+            # Search (F7) — always opens dialog
+            F7)
+                __EDITOR__._search_dialog $rows $cols
+                local dlg_result=$?
+                __EDITOR__.draw_content
+                __EDITOR__.draw_status
+                __EDITOR__.draw_help
+                __EDITOR__.update_cursor
+                if [ $dlg_result -eq 0 ] && [ -n "$__EDITOR___search_pattern" ]; then
+                    local crow=$(__EDITOR__.cursor_row)
+                    local ccol=$(__EDITOR__.cursor_col)
+                    if ! __EDITOR__._search_exec $crow $ccol; then
+                        __EDITOR__._search_exec 0 -1 || true
+                    fi
+                    __EDITOR__.draw_content
+                    __EDITOR__.draw_status
+                    __EDITOR__.update_cursor
+                fi
+                ;;
+
+            # Find next (F17 = layer1-F7)
+            F17)
+                if [ -z "$__EDITOR___search_pattern" ]; then
+                    __EDITOR__._search_dialog $rows $cols
+                    local dlg_result=$?
+                    __EDITOR__.draw_content
+                    __EDITOR__.draw_status
+                    __EDITOR__.draw_help
+                    __EDITOR__.update_cursor
+                    [ $dlg_result -ne 0 ] && continue
+                    [ -z "$__EDITOR___search_pattern" ] && continue
+                fi
+                local crow=$(__EDITOR__.cursor_row)
+                local ccol=$(__EDITOR__.cursor_col)
+                if ! __EDITOR__._search_exec $crow $ccol; then
+                    __EDITOR__._search_exec 0 -1 || true
+                fi
+                __EDITOR__.draw_content
+                __EDITOR__.draw_status
+                __EDITOR__.update_cursor
+                ;;
+
+            # Find previous (F18 = layer1-F8)
+            F18)
+                if [ -z "$__EDITOR___search_pattern" ]; then
+                    __EDITOR__._search_dialog $rows $cols
+                    local dlg_result=$?
+                    __EDITOR__.draw_content
+                    __EDITOR__.draw_status
+                    __EDITOR__.draw_help
+                    __EDITOR__.update_cursor
+                    [ $dlg_result -ne 0 ] && continue
+                    [ -z "$__EDITOR___search_pattern" ] && continue
+                fi
+                local crow=$(__EDITOR__.cursor_row)
+                local ccol=$(__EDITOR__.cursor_col)
+                if ! __EDITOR__._search_exec_backwards $crow $ccol; then
+                    local last=$(( ${#__EDITOR___lines[@]} - 1 ))
+                    __EDITOR__._search_exec_backwards $last ${#__EDITOR___lines[$last]} || true
+                fi
+                __EDITOR__.draw_content
+                __EDITOR__.draw_status
+                __EDITOR__.update_cursor
+                ;;
+
             # Copy selection (F5)
             F5)
                 __EDITOR__.copy_selection
@@ -996,23 +1444,45 @@ __EDITOR__.show(){
                 __EDITOR__.update_cursor
                 ;;
             
-            # ESC: clear selection
+            # ESC: clear selection or exit
             ESC)
                 local sel_active=$(__EDITOR__.selection_active)
                 if [ "$sel_active" = "1" ]; then
                     __EDITOR__.clear_selection
                     __EDITOR__.draw_content
                     __EDITOR__.update_cursor
+                else
+                    # ESC with no selection = exit (same as F10)
+                    local modified=$(__EDITOR__.modified)
+                    if [ $modified -eq 1 ]; then
+                        local answer
+                        __EDITOR__._exit_dialog
+                        answer=$?
+                        tui.screen.clear
+                        __EDITOR__.draw_status
+                        __EDITOR__.draw_content
+                        __EDITOR__.draw_help
+                        __EDITOR__.update_cursor
+                        if [ "$answer" = "0" ]; then
+                            __EDITOR__.save
+                            break
+                        elif [ "$answer" = "1" ]; then
+                            break
+                        fi
+                        # answer=2 (Cancel) - stay in editor
+                    else
+                        break
+                    fi
                 fi
                 ;;
-            
+
             # Exit (F10)
             F10)
                 local modified=$(__EDITOR__.modified)
                 if [ $modified -eq 1 ]; then
-                    local answer=2
-                    __EDITOR___dialog.show_confirm "Unsaved Changes" "Save changes before exit?" && answer=0 || answer=$?
-                    # Redraw editor after dialog
+                    local answer
+                    __EDITOR__._exit_dialog
+                    answer=$?
                     tui.screen.clear
                     __EDITOR__.draw_status
                     __EDITOR__.draw_content
@@ -1022,9 +1492,9 @@ __EDITOR__.show(){
                         __EDITOR__.save
                         break
                     elif [ "$answer" = "1" ]; then
-                        break  # Exit without saving
+                        break
                     fi
-                    # answer=2 (ESC) - stay in editor
+                    # answer=2 (Cancel) - stay in editor
                 else
                     break
                 fi
