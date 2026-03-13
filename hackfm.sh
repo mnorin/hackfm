@@ -3,6 +3,7 @@
 
 # Get HackFM installation directory (for sourcing class files)
 export HACKFM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export HACKFM_RUNNING=1
 mkdir -p "$HACKFM_DIR/logs"
 LOG_FILE="$HACKFM_DIR/logs/hackfm.log"
 
@@ -621,6 +622,7 @@ main_loop() {
 
             # Ctrl+O - toggle between File Manager and Terminal view
             CTRL-O)
+                broker.publish "ui.terminal_opened" ""
                 tui.screen.main
                 tui.cursor.show
                 stty sane
@@ -646,6 +648,7 @@ RCFILE
                 hackfm.read_term_size
                 reload_both_panels
                 draw_screen
+                broker.publish "ui.terminal_closed" ""
                 ;;
                 
             # INSERT - toggle selection and move down
@@ -671,9 +674,11 @@ RCFILE
                 # Translate F1-F12 physical keys to logical keys based on active layer
                 local _active_layer
                 _active_layer=$(main_fkeybar.active_layer)
-                if [[ "$key" =~ ^F([1-9])$ ]] && [ $_active_layer -gt 0 ]; then
-                    local _fnum="${key#F}"
-                    key="F$(( _fnum + _active_layer * 10 ))"
+                if [[ "$key" =~ ^F([1-9][0-2]?)$ ]] && [ $_active_layer -gt 0 ]; then
+                    local _fnum="${BASH_REMATCH[1]}"
+                    if [ "$_fnum" -le 12 ]; then
+                        key="F$(( _fnum + _active_layer * 10 ))"
+                    fi
                 fi
                 # Check module-registered keys first (guard against keys with dots/invalid chars)
                 local _dispatched=0

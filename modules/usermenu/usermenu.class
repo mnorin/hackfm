@@ -86,10 +86,13 @@ usermenu._draw() {
         printf "%${popup_w}s" ""
     done
 
-    # Border with title embedded in top line
-    tui.color.bg_white
-    tui.color.black
-    tui.box.titled $popup_r $popup_c $popup_w $popup_h "$title"
+    # Border + title
+    tui.color.bg_white; tui.color.black
+    tui.box.draw $popup_r $popup_c $popup_w $popup_h
+    tui.cursor.move $popup_r $((popup_c + 2))
+    tui.color.bg_white; tui.color.black
+    printf " %s " "$title"
+    tui.color.reset
 
     # Items
     local inner_w=$((popup_w - 4))   # width available for label text

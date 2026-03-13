@@ -679,7 +679,9 @@ __EDITOR__.show(){
     _size=$(tui.screen.size)
     EDITOR_ROWS=${_size% *}
     EDITOR_COLS=${_size#* }
-    tui.screen.alt
+    local _embedded=0
+    [ -n "${HACKFM_RUNNING:-}" ] && _embedded=1
+    [ $_embedded -eq 0 ] && tui.screen.alt
     tui.cursor.show
     stty -ixon 2>/dev/null
     local rows=$EDITOR_ROWS
@@ -1055,7 +1057,7 @@ __EDITOR__.show(){
     tui.region.reset
     tui.screen.wrap_on
     tui.screen.clear
-    tui.screen.main
+    [ -z "${HACKFM_RUNNING:-}" ] && tui.screen.main
     stty ixon 2>/dev/null
 }
 

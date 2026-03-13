@@ -136,7 +136,7 @@ fscopy._run_multi() {
     local dialog_width=$(( max_path_len + 10 ))
     [ $dialog_width -lt 50 ] && dialog_width=50
     [ $dialog_width -gt 70 ] && dialog_width=70
-    local dialog_height=9
+    local dialog_height=8
 
     local size
     size=$(tui.screen.size)
@@ -164,7 +164,7 @@ fscopy._run_multi() {
 
     # Title
     tui.cursor.move $dialog_row $((dialog_col + 2))
-    tui.color.bg_white; tui.color.black; tui.color.bold
+    tui.color.bg_white; tui.color.black
     printf " Copy "
     tui.color.reset
 
@@ -181,27 +181,27 @@ fscopy._run_multi() {
     [ ${#to_display} -gt $from_max ] && to_display="...${dest_path: -$((from_max - 3))}"
 
     tui.cursor.move $((dialog_row + 4)) $((dialog_col + 2))
-    tui.color.bold; printf "From: "; tui.color.reset
-    tui.color.bg_white; tui.color.black; printf "%s" "$from_display"
+    tui.color.bg_white; tui.color.black
+    printf "From: %s" "$from_display"
 
     tui.cursor.move $((dialog_row + 5)) $((dialog_col + 2))
-    tui.color.bold; printf "To:   "; tui.color.reset
-    tui.color.bg_white; tui.color.black; printf "%s" "$to_display"
+    tui.color.bg_white; tui.color.black
+    printf "To:   %s" "$to_display"
 
     # Buttons
     local selected_btn=0
     local confirm_result=1
     while true; do
-        tui.cursor.move $((dialog_row + 7)) $((dialog_col + dialog_width/2 - 8))
+        tui.cursor.move $((dialog_row + 6)) $((dialog_col + dialog_width/2 - 8))
         if [ $selected_btn -eq 0 ]; then
-            tui.color.bg_cyan; tui.color.black; tui.color.bold
+            tui.color.bg_cyan; tui.color.black
         else
             tui.color.bg_white; tui.color.black
         fi
-        printf "[ Yes ]"
+        printf "[< Yes >]"
         tui.color.reset; tui.color.bg_white; tui.color.black; printf "   "
         if [ $selected_btn -eq 1 ]; then
-            tui.color.bg_cyan; tui.color.black; tui.color.bold
+            tui.color.bg_cyan; tui.color.black
         else
             tui.color.bg_white; tui.color.black
         fi
@@ -211,7 +211,7 @@ fscopy._run_multi() {
         local key
         key=$(tui.input.key 2>&1) || continue
         case "$key" in
-            LEFT|RIGHT|TAB) selected_btn=$(( 1 - selected_btn )) ;;
+            LEFT|RIGHT|TAB|UP|DOWN) selected_btn=$(( 1 - selected_btn )) ;;
             ENTER) [ $selected_btn -eq 0 ] && confirm_result=0; break ;;
             ESC) break ;;
         esac

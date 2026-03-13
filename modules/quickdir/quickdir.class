@@ -131,9 +131,13 @@ quickdir.show(){
         printf "%${popup_w}s" ""
     done
 
-    # Border with title
+    # Border + title
     tui.color.bg_white; tui.color.black
-    tui.box.titled $popup_r $popup_c $popup_w $popup_h "$title"
+    tui.box.draw $popup_r $popup_c $popup_w $popup_h
+    tui.cursor.move $popup_r $((popup_c + 2))
+    tui.color.bg_white; tui.color.black
+    printf " %s " "$title"
+    tui.color.reset
 
     local selected=0
     quickdir._draw_rows $popup_r $popup_c $popup_w $inner_w $selected

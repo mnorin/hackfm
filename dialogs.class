@@ -7,24 +7,25 @@ dialog_cleanup() {
     tui.cursor.hide
 }
 
+# show_path_input "Title" "Message" "default_value"
+# Sets file_dialog.input_value and file_dialog.result (0=OK 1=Cancel)
 show_path_input() {
     local title="$1"
     local message="$2"
     local default="$3"
 
-    # Calculate dialog width based on path length
     local dialog_width=$(( ${#default} + 8 ))
     [ $dialog_width -lt 60 ] && dialog_width=60
     [ $dialog_width -gt 100 ] && dialog_width=100
 
-    local dialog_height=7
-
+    local dialog_height=9
     local size
     size=$(tui.screen.size)
     local rows=${size% *}
     local cols=${size#* }
     local max_width=$(( cols - 4 ))
     [ $dialog_width -gt $max_width ] && dialog_width=$max_width
+    local inner_width=$(( dialog_width - 4 ))
     local dialog_row=$(( (rows - dialog_height) / 2 ))
     local dialog_col=$(( (cols - dialog_width) / 2 ))
 
@@ -43,37 +44,71 @@ show_path_input() {
         tui.cursor.move $r $dialog_col
         printf "%${dialog_width}s" ""
     done
+    tui.color.bg_white; tui.color.black
     tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
 
     # Title
     tui.cursor.move $dialog_row $((dialog_col + 2))
-    tui.color.bg_white; tui.color.black; tui.color.bold
+    tui.color.bg_white; tui.color.black
     printf " %s " "$title"
     tui.color.reset
 
     # Message
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
     tui.color.bg_white; tui.color.black
-    if [ ${#message} -gt $inner_width ]; then message="...${message: -$((inner_width - 3))}"; fi
-    printf "%-${inner_width}s" "$message"
+    local msg_display="$message"
+    if [ ${#msg_display} -gt $inner_width ]; then msg_display="...${message: -$((inner_width - 3))}"; fi
+    printf "%-${inner_width}s" "$msg_display"
+    tui.color.reset
 
     local input="$default"
     local cursor_pos=${#input}
-    local input_width=$(( dialog_width - 4 ))
+    local focus=0  # 0=input 1=OK 2=Cancel
 
     tui.cursor.show
 
     while true; do
+        # Input field
         tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2))
-        tui.color.bg_cyan; tui.color.black
-
+        if [ $focus -eq 0 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
         local display_start=0
-        [ $cursor_pos -ge $input_width ] && display_start=$(( cursor_pos - input_width + 1 ))
-        local display_input="${input:$display_start:$input_width}"
-        printf "%-${input_width}s" "$display_input"
+        [ $cursor_pos -ge $inner_width ] && display_start=$(( cursor_pos - inner_width + 1 ))
+        local display_input="${input:$display_start:$inner_width}"
+        printf "%-${inner_width}s" "$display_input"
+        tui.color.reset
 
-        local cursor_col=$(( cursor_pos - display_start ))
-        tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2 + cursor_col))
+        # OK button (default)
+        tui.cursor.move $((dialog_row + 5)) $((dialog_col + dialog_width/2 - 10))
+        if [ $focus -eq 1 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[< OK >]"
+        tui.color.reset
+        tui.color.bg_white; tui.color.black
+        printf "   "
+        # Cancel button
+        if [ $focus -eq 2 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[ Cancel ]"
+        tui.color.reset
+
+        # Cursor position
+        if [ $focus -eq 0 ]; then
+            local cursor_col=$(( cursor_pos - display_start ))
+            tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2 + cursor_col))
+            tui.cursor.show
+        else
+            tui.cursor.hide
+        fi
 
         local key
         key=$(tui.input.key 2>&1) || true
@@ -81,8 +116,12 @@ show_path_input() {
         case "$key" in
             ENTER)
                 tui.cursor.hide
-                file_dialog.input_value = "$input"
-                file_dialog.result = 0
+                if [ $focus -eq 2 ]; then
+                    file_dialog.result = 1
+                else
+                    file_dialog.input_value = "$input"
+                    file_dialog.result = 0
+                fi
                 return
                 ;;
             ESC)
@@ -90,21 +129,43 @@ show_path_input() {
                 file_dialog.result = 1
                 return
                 ;;
+            TAB|DOWN)
+                focus=$(( (focus + 1) % 3 ))
+                ;;
+            SHIFT-TAB|UP)
+                focus=$(( (focus + 2) % 3 ))
+                ;;
+            LEFT)
+                if [ $focus -eq 0 ] && [ $cursor_pos -gt 0 ]; then
+                    cursor_pos=$(( cursor_pos - 1 ))
+                elif [ $focus -gt 0 ]; then
+                    focus=$(( focus - 1 ))
+                    [ $focus -lt 1 ] && focus=1
+                fi
+                ;;
+            RIGHT)
+                if [ $focus -eq 0 ] && [ $cursor_pos -lt ${#input} ]; then
+                    cursor_pos=$(( cursor_pos + 1 ))
+                elif [ $focus -gt 0 ]; then
+                    focus=$(( focus + 1 ))
+                    [ $focus -gt 2 ] && focus=2
+                fi
+                ;;
+            HOME)  [ $focus -eq 0 ] && cursor_pos=0 ;;
+            END)   [ $focus -eq 0 ] && cursor_pos=${#input} ;;
             BACKSPACE)
-                if [ $cursor_pos -gt 0 ]; then
+                if [ $focus -eq 0 ] && [ $cursor_pos -gt 0 ]; then
                     input="${input:0:$((cursor_pos-1))}${input:$cursor_pos}"
                     cursor_pos=$(( cursor_pos - 1 ))
                 fi
                 ;;
             DELETE)
-                [ $cursor_pos -lt ${#input} ] && input="${input:0:$cursor_pos}${input:$((cursor_pos+1))}"
+                if [ $focus -eq 0 ] && [ $cursor_pos -lt ${#input} ]; then
+                    input="${input:0:$cursor_pos}${input:$((cursor_pos+1))}"
+                fi
                 ;;
-            LEFT)  [ $cursor_pos -gt 0 ] && cursor_pos=$(( cursor_pos - 1 )) ;;
-            RIGHT) [ $cursor_pos -lt ${#input} ] && cursor_pos=$(( cursor_pos + 1 )) ;;
-            HOME)  cursor_pos=0 ;;
-            END)   cursor_pos=${#input} ;;
             *)
-                if [[ ${#key} -eq 1 && "$key" =~ [[:print:]] ]]; then
+                if [ $focus -eq 0 ] && [[ ${#key} -eq 1 && "$key" =~ [[:print:]] ]]; then
                     input="${input:0:$cursor_pos}${key}${input:$cursor_pos}"
                     cursor_pos=$(( cursor_pos + 1 ))
                 fi
@@ -141,26 +202,26 @@ _draw_progress_dialog() {
     local dialog_col=$(( (cols - dialog_width) / 2 ))
 
     # Shadow
+    local r
     tui.color.bg_black
     for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
         tui.cursor.move $r $((dialog_col + 2))
         printf "%$((dialog_width))s" ""
     done
+    tui.color.reset
 
-    # Background
-    tui.color.bg_white
-    tui.color.black
+    # Background + border + title
+    tui.color.bg_white; tui.color.black
     for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
         tui.cursor.move $r $dialog_col
         printf "%${dialog_width}s" ""
     done
-
-    # Border + title
+    tui.color.bg_white; tui.color.black
     tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
     tui.cursor.move $dialog_row $((dialog_col + 2))
-    tui.color.bg_white; tui.color.black; tui.style.bold
+    tui.color.bg_white; tui.color.black
     printf " %s " "$title"
-    tui.style.reset
+    tui.color.reset
 
     # File label (truncated)
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
@@ -170,13 +231,12 @@ _draw_progress_dialog() {
         file_label="...${file_label: -$((label_max - 3))}"
     fi
     printf "%-${inner_width}s" "$file_label"
+    tui.color.reset
 
     # Per-file progress bar
     local bar_width=$inner_width
     local file_pct=0
-    if [ "$bytes_total" -gt 0 ]; then
-        file_pct=$(( bytes_done * 100 / bytes_total ))
-    fi
+    [ "$bytes_total" -gt 0 ] && file_pct=$(( bytes_done * 100 / bytes_total ))
     local filled=$(( bar_width * file_pct / 100 ))
     local empty=$(( bar_width - filled ))
     tui.cursor.move $((dialog_row + 4)) $((dialog_col + 2))
@@ -187,12 +247,11 @@ _draw_progress_dialog() {
     tui.color.bg_white; tui.color.black
     tui.cursor.move $((dialog_row + 5)) $((dialog_col + 2))
     printf "File: %d%%" "$file_pct"
+    tui.color.reset
 
     # Overall progress bar
     local overall_pct=0
-    if [ "$files_total" -gt 0 ]; then
-        overall_pct=$(( files_done * 100 / files_total ))
-    fi
+    [ "$files_total" -gt 0 ] && overall_pct=$(( files_done * 100 / files_total ))
     filled=$(( bar_width * overall_pct / 100 ))
     empty=$(( bar_width - filled ))
     tui.cursor.move $((dialog_row + 7)) $((dialog_col + 2))
@@ -203,14 +262,14 @@ _draw_progress_dialog() {
     tui.color.bg_white; tui.color.black
     tui.cursor.move $((dialog_row + 8)) $((dialog_col + 2))
     printf "Overall: %d%% (%d/%d files)" "$overall_pct" "$files_done" "$files_total"
-
-    tui.style.reset
+    tui.color.reset
 }
 
 _draw_status_dialog() {
     local title="$1"
     local message="$2"
     tui.cursor.hide
+
     local dialog_width=50
     local dialog_height=5
     local size=$(tui.screen.size)
@@ -221,22 +280,29 @@ _draw_status_dialog() {
     local dialog_row=$(( (rows - dialog_height) / 2 ))
     local dialog_col=$(( (cols - dialog_width) / 2 ))
 
+    local r
     tui.color.bg_black
     for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
         tui.cursor.move $r $((dialog_col + 2)); printf "%$((dialog_width))s" ""
     done
+    tui.color.reset
+
     tui.color.bg_white; tui.color.black
     for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
         tui.cursor.move $r $dialog_col; printf "%${dialog_width}s" ""
     done
+    tui.color.bg_white; tui.color.black
     tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
     tui.cursor.move $dialog_row $((dialog_col + 2))
-    tui.style.bold; printf " %s " "$title"; tui.style.reset
+    tui.color.bg_white; tui.color.black
+    printf " %s " "$title"
+    tui.color.reset
+
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
     tui.color.bg_white; tui.color.black
     if [ ${#message} -gt $inner_width ]; then message="...${message: -$((inner_width - 3))}"; fi
     printf "%-${inner_width}s" "$message"
-    tui.style.reset
+    tui.color.reset
 }
 
 _draw_error_dialog() {
@@ -244,8 +310,10 @@ _draw_error_dialog() {
     local line1="$2"
     local line2="${3:-}"
     tui.cursor.hide
+
     local dialog_width=56
-    local dialog_height=$([ -n "$line2" ] && echo 7 || echo 5)
+    local dialog_height
+    [ -n "$line2" ] && dialog_height=7 || dialog_height=5
     local size=$(tui.screen.size)
     local rows=${size% *}; local cols=${size#* }
     local max_width=$(( cols - 4 ))
@@ -255,36 +323,41 @@ _draw_error_dialog() {
     local dialog_col=$(( (cols - dialog_width) / 2 ))
 
     # Shadow
+    local r
     tui.color.bg_black
     for ((r=dialog_row+1; r<dialog_row+dialog_height+1; r++)); do
         tui.cursor.move $r $((dialog_col + 2)); printf "%$((dialog_width))s" ""
     done
-    # Red background
+    tui.color.reset
+
+    # Red background + border + title
     tui.color.bg_red; tui.color.bright_white
     for ((r=dialog_row; r<dialog_row+dialog_height; r++)); do
         tui.cursor.move $r $dialog_col; printf "%${dialog_width}s" ""
     done
+    tui.color.bg_red; tui.color.bright_white
     tui.box.draw $dialog_row $dialog_col $dialog_width $dialog_height
-    # Title
     tui.cursor.move $dialog_row $((dialog_col + 2))
     tui.color.bg_red; tui.color.bright_white
-    tui.style.bold; printf " %s " "$title"; tui.style.reset
+    printf " %s " "$title"
+    tui.color.reset
+
     # Line 1
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
     tui.color.bg_red; tui.color.bright_white
     if [ ${#line1} -gt $inner_width ]; then line1="...${line1: -$((inner_width - 3))}"; fi
     printf "%-${inner_width}s" "$line1"
+
     # Line 2
     if [ -n "$line2" ]; then
         tui.cursor.move $((dialog_row + 3)) $((dialog_col + 2))
         if [ ${#line2} -gt $inner_width ]; then line2="...${line2: -$((inner_width - 3))}"; fi
         printf "%-${inner_width}s" "$line2"
     fi
+
     # Press any key hint
-    local hint="Press any key..."
-    local hint_row=$((dialog_row + dialog_height - 2))
-    tui.cursor.move $hint_row $((dialog_col + 2))
-    tui.style.bold; printf "%-${inner_width}s" "$hint"; tui.style.reset
+    tui.cursor.move $((dialog_row + dialog_height - 2)) $((dialog_col + 2))
+    tui.color.bg_red; tui.color.bright_white
+    printf "%-${inner_width}s" "Press any key..."
     tui.color.reset
 }
-
