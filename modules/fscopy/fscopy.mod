@@ -136,7 +136,7 @@ fscopy._run_multi() {
     local dialog_width=$(( max_path_len + 10 ))
     [ $dialog_width -lt 50 ] && dialog_width=50
     [ $dialog_width -gt 70 ] && dialog_width=70
-    local dialog_height=8
+    local dialog_height=9
 
     local size
     size=$(tui.screen.size)
@@ -192,7 +192,7 @@ fscopy._run_multi() {
     local selected_btn=0
     local confirm_result=1
     while true; do
-        tui.cursor.move $((dialog_row + 6)) $((dialog_col + dialog_width/2 - 8))
+        tui.cursor.move $((dialog_row + 7)) $((dialog_col + dialog_width/2 - 8))
         if [ $selected_btn -eq 0 ]; then
             tui.color.bg_cyan; tui.color.black
         else

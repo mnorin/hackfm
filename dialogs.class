@@ -18,7 +18,7 @@ show_path_input() {
     [ $dialog_width -lt 60 ] && dialog_width=60
     [ $dialog_width -gt 100 ] && dialog_width=100
 
-    local dialog_height=9
+    local dialog_height=7
     local size
     size=$(tui.screen.size)
     local rows=${size% *}

@@ -58,7 +58,7 @@ Use background color alone to indicate focus.
 - Title centered on top border line: ` Title Text ` (spaces padding)
 - Minimum 1 blank row between title border and first element
 - Minimum 1 blank row between last element and button row
-- Exactly 1 blank row between button row and bottom border (buttons at dh-2)
+- No blank row between button row and bottom border (buttons at dh-2)
 - Buttons on the second-to-last row (row dh-2 from dialog top)
 - Buttons separated by 3 spaces
 
