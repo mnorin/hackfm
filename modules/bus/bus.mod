@@ -28,7 +28,14 @@ bus.pre_init() {
 
     trap 'bus._handler' USR1
     bus._start_listener
+
+    # Self-manage pause/resume around terminal handoffs
+    broker.subscribe "ui.terminal_opened" "bus.pause_processing"
+    broker.subscribe "ui.terminal_closed" "bus.resume_processing"
 }
+
+bus.pause_processing.process_message()  { bus.pause_processing; }
+bus.resume_processing.process_message() { bus.resume_processing; }
 
 bus.on_exit() {
     local pid

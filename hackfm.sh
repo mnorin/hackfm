@@ -198,13 +198,13 @@ reload_both_panels() {
 }
 
 # Terminal lifecycle handlers
-handle_terminal_enter() {
+handle_terminal_opened() {
     tui.screen.main
     tui.cursor.show
     stty sane
 }
 
-handle_terminal_exit() {
+handle_terminal_closed() {
     tui.screen.alt
     stty -echo 2>/dev/null
     hackfm.read_term_size
@@ -213,8 +213,8 @@ handle_terminal_exit() {
 }
 
 # process_message wrappers for plain function broker subscribers
-handle_terminal_enter.process_message() { handle_terminal_enter; }
-handle_terminal_exit.process_message()  { handle_terminal_exit;  }
+handle_terminal_opened.process_message() { handle_terminal_opened; }
+handle_terminal_closed.process_message()  { handle_terminal_closed;  }
 draw_main_frame.process_message()       { draw_main_frame;       }
 
 # ============================================================================
@@ -260,8 +260,8 @@ init() {
     cmd.register broker
 
     # Subscribe to broker topics
-    broker.subscribe "ui.terminal_enter"  "handle_terminal_enter"
-    broker.subscribe "ui.terminal_exit"   "handle_terminal_exit"
+    broker.subscribe "ui.terminal_opened"  "handle_terminal_opened"
+    broker.subscribe "ui.terminal_closed"   "handle_terminal_closed"
     broker.subscribe "viewer_closed"      "draw_main_frame"
     broker.subscribe "editor_closed"      "draw_main_frame"
 
@@ -358,6 +358,7 @@ execute_command() {
     cmd.clear
     
     # Switch to main screen for terminal output
+    broker.publish "ui.terminal_opened" ""
     tui.screen.main
     
     # Restore terminal to sane interactive mode
@@ -388,6 +389,7 @@ execute_command() {
     tui.screen.alt
     hackfm.read_term_size
     reload_both_panels
+    broker.publish "ui.terminal_closed" ""
 }
 
 # ============================================================================

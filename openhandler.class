@@ -33,7 +33,7 @@ openhandler._open_in_terminal() {
     local filename
     filename=$(basename "$filepath")
 
-    broker.publish "ui.terminal_enter" ""
+    broker.publish "ui.terminal_opened" ""
 
     echo "${USER}@$(hostname):${filedir}\$ ${filename}"
     tui.cursor.show
@@ -49,7 +49,7 @@ openhandler._open_in_terminal() {
     echo "--- Program exited with code $_exit. Press any key ---"
     read -rsn1
 
-    broker.publish "ui.terminal_exit" ""
+    broker.publish "ui.terminal_closed" ""
 }
 
 openhandler._open_in_new_terminal() {
