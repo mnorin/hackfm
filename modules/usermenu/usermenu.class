@@ -169,7 +169,6 @@ usermenu._execute() {
 # Run command in the current terminal, restoring hackfm afterwards
 usermenu._run_in_terminal() {
     local cmd="$1"
-    tui.screen.clear
     tui.cursor.show
     tui.color.reset
     tui.region.reset

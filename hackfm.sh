@@ -197,25 +197,22 @@ reload_both_panels() {
     right_panel.reload
 }
 
-# Terminal lifecycle handlers
-handle_terminal_opened() {
-    tui.screen.main
-    tui.cursor.show
-    stty sane
-}
-
-handle_terminal_closed() {
-    tui.screen.alt
-    stty -echo 2>/dev/null
-    hackfm.read_term_size
-    reload_both_panels
-    draw_screen
-}
-
 # process_message wrappers for plain function broker subscribers
-handle_terminal_opened.process_message() { handle_terminal_opened; }
-handle_terminal_closed.process_message()  { handle_terminal_closed;  }
-draw_main_frame.process_message()       { draw_main_frame;       }
+draw_main_frame.process_message()             { draw_main_frame;             }
+hackfm_redraw_fkeybar.process_message()       { hackfm_redraw_fkeybar;       }
+hackfm_redraw_title.process_message()         { hackfm_redraw_title;         }
+
+hackfm_redraw_fkeybar() {
+    fkeybar.update_labels
+    main_fkeybar.row = $__HACKFM_ROWS
+    main_fkeybar.width = $__HACKFM_COLS
+    main_fkeybar.render
+}
+
+hackfm_redraw_title() {
+    main_title.width = $__HACKFM_COLS
+    main_title.render
+}
 
 # ============================================================================
 # INITIALIZATION
@@ -260,10 +257,13 @@ init() {
     cmd.register broker
 
     # Subscribe to broker topics
-    broker.subscribe "ui.terminal_opened"  "handle_terminal_opened"
-    broker.subscribe "ui.terminal_closed"   "handle_terminal_closed"
-    broker.subscribe "viewer_closed"      "draw_main_frame"
-    broker.subscribe "editor_closed"      "draw_main_frame"
+    broker.subscribe "viewer_closed"       "draw_main_frame"
+    broker.subscribe "editor_closed"       "draw_main_frame"
+    broker.subscribe "ui.terminal_closed"  "hackfm_redraw_title"
+    broker.subscribe "ui.terminal_closed"  "hackfm_redraw_fkeybar"
+
+    # Init non-module components that need broker
+    # (openhandler no longer needs broker init)
 
     # Wire dialog to panels
     left_panel.dialog = file_dialog
@@ -313,9 +313,7 @@ draw_main_frame() {
 }
 
 draw_screen() {
-    tui.screen.alt
     tui.cursor.hide
-    tui.screen.clear
     fkeybar.update_labels
     main_title.width = $__HACKFM_COLS
     main_title.render
@@ -356,17 +354,12 @@ execute_command() {
     
     # Clear command line for next command
     cmd.clear
-    
-    # Switch to main screen for terminal output
+
     broker.publish "ui.terminal_opened" ""
     tui.screen.main
-    
-    # Restore terminal to sane interactive mode
     stty sane
-    
-    # Reset colors for command execution
     tui.color.reset
-    
+
     # Execute the command
     cd "$exec_path"
     echo "$USER@$(hostname):$exec_path\$ $command"
@@ -378,17 +371,16 @@ execute_command() {
     trap '__ba_err_report $? $LINENO' ERR
 
     echo ""
-    
+
     # Check if directory changed and update panel
     local new_path=$(pwd)
     if [ "$new_path" != "$exec_path" ]; then
         $list.path = "$new_path"
     fi
-    
-    stty -echo 2>/dev/null
+
     tui.screen.alt
+    stty -echo 2>/dev/null
     hackfm.read_term_size
-    reload_both_panels
     broker.publish "ui.terminal_closed" ""
 }
 
@@ -500,7 +492,7 @@ show_menu() {
 
 # Main loop
 main_loop() {
-    
+    tui.screen.clear
     draw_screen
     
     while true; do
@@ -620,37 +612,6 @@ main_loop() {
             # Ctrl+S - Quick search
             CTRL-S)
                 $(get_active_panel).quick_search
-                ;;
-
-            # Ctrl+O - toggle between File Manager and Terminal view
-            CTRL-O)
-                broker.publish "ui.terminal_opened" ""
-                tui.screen.main
-                tui.cursor.show
-                stty sane
-
-                trap - ERR
-                set +e
-                bash --rcfile <(cat <<'RCFILE'
-# Source user's bashrc if it exists
-if [ -f ~/.bashrc ]; then
-    source ~/.bashrc
-fi
-
-# Bind Ctrl+O to exit silently — wrap in function to suppress bash printing the command
-__hackfm_exit() { exit; }
-bind -x '"\C-o": __hackfm_exit'
-RCFILE
-) -i < /dev/tty > /dev/tty 2>&1 || true
-                set -e
-                trap '__ba_err_report $? $LINENO' ERR
-
-                stty -echo 2>/dev/null
-                tui.screen.alt
-                hackfm.read_term_size
-                reload_both_panels
-                draw_screen
-                broker.publish "ui.terminal_closed" ""
                 ;;
                 
             # INSERT - toggle selection and move down
