@@ -244,15 +244,15 @@ __PANEL__.render_row_string(){
     echo "$row"
 }
 
-# Pre-render all file rows (called when directory loads or panel becomes active)
+# Pre-render all file rows in parallel for performance
 __PANEL__.prerender_all_rows(){
     local list=$(__PANEL__.list_source)
     local count=$($list.count)
     __PANEL___rendered_rows=()
-    
-    for ((i=0; i<count; i++)); do
-        __PANEL___rendered_rows[$i]=$(__PANEL__.render_row_string $i)
-    done
+
+    . <(for ((i=0; i<count; i++)); do
+        echo "__PANEL___rendered_rows[$i]=$(printf '%q' "$(__PANEL__.render_row_string $i)")" &
+    done; wait)
 }
 
 # Update a single pre-rendered row
