@@ -1,6 +1,5 @@
 # openhandler.class - Open dispatch layer for HackFM
 # Handles ext.conf lookup and file execution.
-# For terminal execution, coordinates with hackfm via message broker.
 #
 # Usage:
 #   openhandler.open filepath
@@ -34,9 +33,11 @@ openhandler._open_in_terminal() {
     filename=$(basename "$filepath")
 
     broker.publish "ui.terminal_opened" ""
+    tui.screen.main
+    tui.cursor.show
+    stty sane
 
     echo "${USER}@$(hostname):${filedir}\$ ${filename}"
-    tui.cursor.show
 
     trap - ERR
     set +e
@@ -49,6 +50,9 @@ openhandler._open_in_terminal() {
     echo "--- Program exited with code $_exit. Press any key ---"
     read -rsn1
 
+    tui.screen.alt
+    stty -echo 2>/dev/null
+    hackfm.read_term_size
     broker.publish "ui.terminal_closed" ""
 }
 
@@ -74,7 +78,6 @@ openhandler._open_in_new_terminal() {
 openhandler.open() {
     local filepath="$1"
 
-    # Check ext.conf for a handler
     openhandler._lookup_conf "$filepath"
     local handler="$__OPENHANDLER_HANDLER"
 
@@ -90,7 +93,6 @@ openhandler.open() {
         return
     fi
 
-    # No ext.conf handler - treat as executable
     if [ ! -x "$filepath" ]; then
         return
     fi

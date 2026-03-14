@@ -318,16 +318,21 @@ __PANEL__._publish_dir(){
 # Handle incoming broker messages
 __PANEL__.register(){
     local broker="$1"
-    $broker.subscribe "dialog_closed" "__PANEL__"
-    $broker.subscribe "viewer_closed" "__PANEL__"
-    $broker.subscribe "editor_closed" "__PANEL__"
-    $broker.subscribe "selection.clear" "__PANEL__"
+    $broker.subscribe "dialog_closed"      "__PANEL__"
+    $broker.subscribe "viewer_closed"      "__PANEL__"
+    $broker.subscribe "editor_closed"      "__PANEL__"
+    $broker.subscribe "selection.clear"    "__PANEL__"
+    $broker.subscribe "ui.terminal_closed" "__PANEL__"
 }
 
 __PANEL__.process_message(){
     local topic="$1"
     case "$topic" in
         dialog_closed|viewer_closed|editor_closed)
+            __PANEL__.render
+            ;;
+        ui.terminal_closed)
+            __PANEL__.reload
             __PANEL__.render
             ;;
         selection.clear)

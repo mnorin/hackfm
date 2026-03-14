@@ -90,12 +90,12 @@ __COMMANDLINE__.register(){
     local broker="$1"
     __COMMANDLINE__.message_broker = "$broker"
     $broker.subscribe "panel.active.dir_changed" "__COMMANDLINE__"
-    $broker.subscribe "ui.menu_closed" "__COMMANDLINE__"
-    $broker.subscribe "viewer_closed" "__COMMANDLINE__"
-    $broker.subscribe "editor_closed" "__COMMANDLINE__"
+    $broker.subscribe "ui.menu_closed"            "__COMMANDLINE__"
+    $broker.subscribe "viewer_closed"             "__COMMANDLINE__"
+    $broker.subscribe "editor_closed"             "__COMMANDLINE__"
+    $broker.subscribe "ui.terminal_closed"        "__COMMANDLINE__"
 }
 
-# Handle incoming broker messages
 __COMMANDLINE__.process_message(){
     local topic="$1"
     local data="$2"
@@ -104,7 +104,7 @@ __COMMANDLINE__.process_message(){
             __COMMANDLINE__.prompt = "$USER@$(hostname):$data\$ "
             __COMMANDLINE__.render
             ;;
-        ui.menu_closed|viewer_closed|editor_closed)
+        ui.menu_closed|viewer_closed|editor_closed|ui.terminal_closed)
             __COMMANDLINE__.render
             ;;
     esac
