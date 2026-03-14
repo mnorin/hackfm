@@ -179,7 +179,7 @@ __FILEATTR__._draw(){
 
     # Title
     tui.cursor.move $dr $((dc + 2))
-    tui.color.bg_white; tui.color.black; tui.color.bold
+    tui.color.bg_white; tui.color.black
     printf ' File Attributes '
     tui.color.reset
 
@@ -205,11 +205,11 @@ __FILEATTR__._draw(){
 
     # Header row — each label is 4 chars wide: " X  " aligned over "[X] "
     tui.cursor.move $((dr + 4)) $((dc + 2 + _FA_COL_LABEL))
-    tui.color.bg_white; tui.color.black; tui.color.bold
+    tui.color.bg_white; tui.color.black
     printf '%-8s' ''           # label column spacer
     tui.color.reset
     tui.cursor.move $((dr + 4)) $((dc + 2 + _FA_COL_R))
-    tui.color.bg_white; tui.color.black; tui.color.bold
+    tui.color.bg_white; tui.color.black
     printf ' R   W   X   Special'
     tui.color.reset
 
@@ -265,17 +265,17 @@ __FILEATTR__._draw(){
     local apply_col=$(( dc + _FA_DW/2 - 11 ))
     tui.cursor.move $btn_row $apply_col
     if [ $focus -eq 12 ]; then
-        tui.color.bg_cyan; tui.color.black; tui.color.bold
+        tui.color.bg_cyan; tui.color.black
     else
-        tui.color.bg_white; tui.color.black; tui.color.bold
+        tui.color.bg_white; tui.color.black
     fi
-    printf '[ Apply ]'
+    printf '[< Apply >]'
     tui.color.reset
     tui.color.bg_white; tui.color.black; printf '    '
     if [ $focus -eq 13 ]; then
-        tui.color.bg_cyan; tui.color.black; tui.color.bold
+        tui.color.bg_cyan; tui.color.black
     else
-        tui.color.bg_white; tui.color.black; tui.color.bold
+        tui.color.bg_white; tui.color.black
     fi
     printf '[ Cancel ]'
     tui.color.reset

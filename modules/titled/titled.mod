@@ -26,9 +26,13 @@ titled.init() {
     [ -z "$__TITLED_CMD" ] && return
     [ -z "$__HACKFM_FIFO" ] && return  # bus module not loaded
 
-    broker.subscribe "title.update"    "titled._on_update"
-    broker.subscribe "ui.menu_opened"  "titled._on_menu_opened"
-    broker.subscribe "ui.menu_closed"  "titled._on_menu_closed"
+    broker.subscribe "title.update"       "titled._on_update"
+    broker.subscribe "ui.menu_opened"     "titled._on_menu_opened"
+    broker.subscribe "ui.menu_closed"     "titled._on_menu_closed"
+    broker.subscribe "ui.terminal_opened" "titled._on_menu_opened"
+    broker.subscribe "ui.terminal_closed" "titled._on_menu_closed"
+    broker.subscribe "ui.terminal_enter"  "titled._on_menu_opened"
+    broker.subscribe "ui.terminal_exit"   "titled._on_menu_closed"
 
     titled._start_loop
 }

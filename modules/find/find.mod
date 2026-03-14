@@ -61,7 +61,6 @@ find._show_search_form() {
     tui.cursor.move $r $((c+2))
     tui.color.bg_white
     tui.color.black
-    tui.color.bold
     printf " Find File "
     tui.color.reset
 
@@ -85,7 +84,6 @@ find._draw_field() {
     if [ "$active" = "1" ]; then
         tui.color.bg_cyan
         tui.color.black
-        tui.color.bold
     else
         tui.color.bg_black
         tui.color.white
@@ -100,7 +98,6 @@ find._draw_checkbox() {
     if [ "$active" = "1" ]; then
         tui.color.bg_cyan
         tui.color.black
-        tui.color.bold
     else
         tui.color.bg_white
         tui.color.black
@@ -114,17 +111,20 @@ find._draw_checkbox() {
 }
 
 find._draw_button() {
-    local row=$1 col=$2 label=$3 active=$4
+    local row=$1 col=$2 label=$3 active=$4 is_default=${5:-0}
     tui.cursor.move $row $col
     if [ "$active" = "1" ]; then
         tui.color.bg_cyan
         tui.color.black
-        tui.color.bold
     else
         tui.color.bg_white
         tui.color.black
     fi
-    printf "[ %s ]" "$label"
+    if [ "$is_default" = "1" ]; then
+        printf "[< %s >]" "$label"
+    else
+        printf "[ %s ]" "$label"
+    fi
     tui.color.reset
 }
 
@@ -150,8 +150,8 @@ find._form_loop() {
         find._draw_field $((r+6)) $c $field_w "$dir_val"     "$([ $focus -eq 2 ] && echo 1 || echo 0)"
         find._draw_checkbox $((r+8)) $c "Case sensitive" "$case_val"   "$([ $focus -eq 3 ] && echo 1 || echo 0)"
         find._draw_checkbox $((r+9)) $c "Skip hidden"    "$hidden_val" "$([ $focus -eq 4 ] && echo 1 || echo 0)"
-        find._draw_button $((r+11)) $((c + w/2 - 10)) "Find"   "$([ $focus -eq 5 ] && echo 1 || echo 0)"
-        find._draw_button $((r+11)) $((c + w/2 + 1))  "Cancel" "$([ $focus -eq 6 ] && echo 1 || echo 0)"
+        find._draw_button $((r+11)) $((c + w/2 - 10)) "Find"   "$([ $focus -eq 5 ] && echo 1 || echo 0)" 1
+        find._draw_button $((r+11)) $((c + w/2 + 2))  "Cancel" "$([ $focus -eq 6 ] && echo 1 || echo 0)" 0
 
         # Position cursor in active text field
         case $focus in
@@ -175,7 +175,16 @@ find._form_loop() {
                 ;;
             ENTER)
                 case $focus in
-                    0|1|2|3|4) focus=$(( focus + 1 )) ;;  # advance to next
+                    0|1|2|3|4)  # fields/checkboxes — trigger Find (default button)
+                        __FIND_QUERY_NAME="$name_val"
+                        __FIND_QUERY_CONTENT="$content_val"
+                        __FIND_START_DIR="$dir_val"
+                        __FIND_CASE_SENSITIVE=$case_val
+                        __FIND_SKIP_HIDDEN=$hidden_val
+                        tui.cursor.hide
+                        find._run_search
+                        return
+                        ;;
                     5)  # Find button
                         __FIND_QUERY_NAME="$name_val"
                         __FIND_QUERY_CONTENT="$content_val"
@@ -191,6 +200,12 @@ find._form_loop() {
                         return
                         ;;
                 esac
+                ;;
+            LEFT)
+                if [ $focus -eq 6 ]; then focus=5; fi
+                ;;
+            RIGHT)
+                if [ $focus -eq 5 ]; then focus=6; fi
                 ;;
             SPACE)
                 case $focus in
@@ -251,7 +266,6 @@ find._run_search() {
     tui.cursor.move $r $((c+2))
     tui.color.bg_white
     tui.color.black
-    tui.color.bold
     printf " Searching... "
     tui.color.reset
     tui.cursor.move $((r+2)) $((c+2))
@@ -357,7 +371,6 @@ find._draw_results_frame() {
     tui.cursor.move $r $((c+2))
     tui.color.bg_white
     tui.color.black
-    tui.color.bold
     printf " Find Results "
     tui.color.reset
 

@@ -176,8 +176,301 @@ __VIEWER__._check_window(){
 }
 
 # ============================================================================
-# Show (blocking)
+# SEARCH
 # ============================================================================
+
+# Search state
+__VIEWER___search_pattern=""
+__VIEWER___search_case=1
+__VIEWER___search_backwards=0
+__VIEWER___search_whole=0
+
+__VIEWER__._search_draw_all(){
+    local dr=$1 dc=$2 dw=$3 dh=$4 pattern=$5 case_s=$6 back_s=$7 whole_s=$8 focus=$9
+    local cursor_pos=${10:-${#pattern}}
+    local inner=$(( dw - 4 ))
+
+    # Input field
+    tui.cursor.move $((dr + 3)) $((dc + 2))
+    if [ $focus -eq 0 ]; then
+        tui.color.bg_cyan; tui.color.black
+    else
+        tui.color.bg_white; tui.color.black
+    fi
+    local display_start=0
+    [ $cursor_pos -ge $inner ] && display_start=$(( cursor_pos - inner + 1 ))
+    local display_pat="${pattern:$display_start:$inner}"
+    printf " %-${inner}s" "$display_pat"
+    tui.color.reset
+
+    # Checkboxes
+    local i label mark
+    local cb_labels=("Case sensitive" "Backwards" "Whole word")
+    local cb_vals=($case_s $back_s $whole_s)
+    for ((i=0; i<3; i++)); do
+        tui.cursor.move $((dr + 5 + i)) $((dc + 4))
+        if [ $(( i + 1 )) -eq $focus ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        mark=" "
+        [ "${cb_vals[$i]}" -eq 1 ] && mark="X"
+        printf "[%s] %-20s" "$mark" "${cb_labels[$i]}"
+        tui.color.reset
+    done
+
+    # Buttons — OK is default
+    local btn_row=$(( dr + dh - 2 ))
+    local ok_col=$(( dc + dw/2 - 9 ))
+    tui.cursor.move $btn_row $ok_col
+    if [ $focus -eq 4 ]; then
+        tui.color.bg_cyan; tui.color.black
+    else
+        tui.color.bg_white; tui.color.black
+    fi
+    printf "[< OK >]"
+    tui.color.reset
+    tui.color.bg_white; tui.color.black
+    printf "   "
+    if [ $focus -eq 5 ]; then
+        tui.color.bg_cyan; tui.color.black
+    else
+        tui.color.bg_white; tui.color.black
+    fi
+    printf "[ Cancel ]"
+    tui.color.reset
+
+    # Cursor in input
+    if [ $focus -eq 0 ]; then
+        local cur_col=$(( dc + 2 + (cursor_pos - display_start) + 1 ))
+        tui.cursor.move $((dr + 3)) $cur_col
+    fi
+}
+
+__VIEWER__._search_dialog(){
+    local rows=$1 cols=$2
+    local dw=52 dh=11
+    local dr=$(( (rows - dh) / 2 ))
+    local dc=$(( (cols - dw) / 2 ))
+    local r
+
+    tui.region.reset
+    tui.screen.wrap_on
+
+    # Shadow
+    tui.color.bg_black
+    for ((r=dr+1; r<dr+dh+1; r++)); do
+        tui.cursor.move $r $(( dc + 2 ))
+        printf "%${dw}s" ""
+    done
+    tui.color.reset
+
+    # Background
+    tui.color.bg_white; tui.color.black
+    for ((r=dr; r<dr+dh; r++)); do
+        tui.cursor.move $r $dc
+        printf "%${dw}s" ""
+    done
+
+    # Border + title
+    tui.color.bg_white; tui.color.black
+    tui.box.draw $dr $dc $dw $dh
+    tui.cursor.move $dr $(( dc + (dw - 8) / 2 ))
+    tui.color.bg_white; tui.color.black
+    printf " Search "
+    tui.color.reset
+
+    # Label
+    tui.cursor.move $(( dr + 2 )) $(( dc + 2 ))
+    tui.color.bg_white; tui.color.black
+    printf "Search for:"
+    tui.color.reset
+
+    local pattern="$__VIEWER___search_pattern"
+    local case_s=$__VIEWER___search_case
+    local back_s=$__VIEWER___search_backwards
+    local whole_s=$__VIEWER___search_whole
+    local focus=0
+    local cursor_pos=${#pattern}
+
+    __VIEWER__._search_draw_all $dr $dc $dw $dh "$pattern" $case_s $back_s $whole_s $focus $cursor_pos
+    tui.cursor.show
+
+    local key
+    while true; do
+        key=$(tui.input.key 2>&1) || continue
+        case "$key" in
+            TAB|DOWN)
+                focus=$(( (focus + 1) % 6 ))
+                ;;
+            SHIFT-TAB|UP)
+                focus=$(( (focus + 5) % 6 ))
+                ;;
+            LEFT)
+                if [ $focus -eq 0 ]; then
+                    [ $cursor_pos -gt 0 ] && cursor_pos=$(( cursor_pos - 1 ))
+                elif [ $focus -eq 5 ]; then
+                    focus=4
+                fi
+                ;;
+            RIGHT)
+                if [ $focus -eq 0 ]; then
+                    [ $cursor_pos -lt ${#pattern} ] && cursor_pos=$(( cursor_pos + 1 ))
+                elif [ $focus -eq 4 ]; then
+                    focus=5
+                fi
+                ;;
+            HOME)
+                [ $focus -eq 0 ] && cursor_pos=0
+                ;;
+            END)
+                [ $focus -eq 0 ] && cursor_pos=${#pattern}
+                ;;
+            SPACE)
+                [ $focus -eq 1 ] && case_s=$(( 1 - case_s ))
+                [ $focus -eq 2 ] && back_s=$(( 1 - back_s ))
+                [ $focus -eq 3 ] && whole_s=$(( 1 - whole_s ))
+                ;;
+            ENTER)
+                if [ $focus -eq 5 ]; then
+                    tui.cursor.hide
+                    return 1
+                fi
+                if [ $focus -eq 1 ]; then case_s=$(( 1 - case_s ))
+                elif [ $focus -eq 2 ]; then back_s=$(( 1 - back_s ))
+                elif [ $focus -eq 3 ]; then whole_s=$(( 1 - whole_s ))
+                else
+                    __VIEWER___search_pattern="$pattern"
+                    __VIEWER___search_case=$case_s
+                    __VIEWER___search_backwards=$back_s
+                    __VIEWER___search_whole=$whole_s
+                    tui.cursor.hide
+                    return 0
+                fi
+                ;;
+            ESC)
+                tui.cursor.hide
+                return 1
+                ;;
+            BACKSPACE)
+                if [ $focus -eq 0 ] && [ $cursor_pos -gt 0 ]; then
+                    pattern="${pattern:0:$((cursor_pos-1))}${pattern:$cursor_pos}"
+                    cursor_pos=$(( cursor_pos - 1 ))
+                fi
+                ;;
+            DELETE)
+                if [ $focus -eq 0 ] && [ $cursor_pos -lt ${#pattern} ]; then
+                    pattern="${pattern:0:$cursor_pos}${pattern:$((cursor_pos+1))}"
+                fi
+                ;;
+            *)
+                if [ ${#key} -eq 1 ] && [ $focus -eq 0 ]; then
+                    pattern="${pattern:0:$cursor_pos}${key}${pattern:$cursor_pos}"
+                    cursor_pos=$(( cursor_pos + 1 ))
+                fi
+                ;;
+        esac
+        __VIEWER__._search_draw_all $dr $dc $dw $dh "$pattern" $case_s $back_s $whole_s $focus $cursor_pos
+    done
+}
+
+__VIEWER__._search_exec(){
+    local start=$1
+    local pattern="$__VIEWER___search_pattern"
+    [ -z "$pattern" ] && return 1
+
+    local grep_flags="-n"
+    [ $__VIEWER___search_case -eq 0 ] && grep_flags="$grep_flags -i"
+    [ $__VIEWER___search_whole -eq 1 ] && grep_flags="$grep_flags -w"
+
+    local filepath=$(__VIEWER__.filepath)
+    local found
+
+    if [ $__VIEWER___search_backwards -eq 0 ]; then
+        found=$(grep $grep_flags -- "$pattern" "$filepath" 2>/dev/null \
+            | awk -F: -v s="$((start + 2))" '$1 >= s {print $1; exit}')
+    else
+        found=$(grep $grep_flags -- "$pattern" "$filepath" 2>/dev/null \
+            | awk -F: -v s="$start" '$1 < s {last=$1} END {if(last) print last}')
+    fi
+
+    if [ -n "$found" ]; then
+        scroll=$(( found - 1 ))
+        return 0
+    fi
+    return 1
+}
+
+__VIEWER__._search_not_found(){
+    local rows=$1 cols=$2
+    local msg="Not found. Search from beginning?"
+    local dw=$(( ${#msg} + 8 ))
+    local dh=7
+    local dr=$(( (rows - dh) / 2 ))
+    local dc=$(( (cols - dw) / 2 ))
+    local r
+
+    tui.region.reset
+    tui.screen.wrap_on
+
+    # Shadow
+    tui.color.bg_black
+    for ((r=dr+1; r<dr+dh+1; r++)); do
+        tui.cursor.move $r $(( dc + 2 ))
+        printf "%${dw}s" ""
+    done
+    tui.color.reset
+
+    # Background + border
+    tui.color.bg_white; tui.color.black
+    for ((r=dr; r<dr+dh; r++)); do
+        tui.cursor.move $r $dc
+        printf "%${dw}s" ""
+    done
+    tui.color.bg_white; tui.color.black
+    tui.box.draw $dr $dc $dw $dh
+    tui.cursor.move $dr $(( dc + (dw - 13) / 2 ))
+    tui.color.bg_white; tui.color.black
+    printf " Not Found "
+    tui.color.reset
+
+    tui.cursor.move $(( dr + 2 )) $(( dc + 4 ))
+    tui.color.bg_white; tui.color.black
+    printf "%s" "$msg"
+    tui.color.reset
+
+    local sel=0
+    local key
+    while true; do
+        tui.cursor.move $(( dr + 5 )) $(( dc + dw/2 - 8 ))
+        if [ $sel -eq 0 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[< Yes >]"
+        tui.color.reset
+        tui.color.bg_white; tui.color.black
+        printf "   "
+        if [ $sel -eq 1 ]; then
+            tui.color.bg_cyan; tui.color.black
+        else
+            tui.color.bg_white; tui.color.black
+        fi
+        printf "[ No ]"
+        tui.color.reset
+
+        key=$(tui.input.key 2>&1) || continue
+        case "$key" in
+            LEFT|RIGHT|TAB|UP|DOWN) sel=$(( 1 - sel )) ;;
+            ENTER) [ $sel -eq 0 ] && return 0; return 1 ;;
+            ESC|n|N) return 1 ;;
+            y|Y) return 0 ;;
+        esac
+    done
+}
+
 
 __VIEWER__.show(){
     local filepath=$(__VIEWER__.filepath)
@@ -211,7 +504,10 @@ __VIEWER__.show(){
         total_lines=${#__VIEWER___lines[@]}
     fi
 
-    tui.screen.alt
+    # Only switch to alt screen if running standalone (not embedded in hackfm)
+    local _embedded=0
+    [ -n "${HACKFM_RUNNING:-}" ] && _embedded=1
+    [ $_embedded -eq 0 ] && tui.screen.alt
     tui.cursor.hide
     tui.screen.clear
     __VIEWER___title.width = $cols
@@ -219,7 +515,7 @@ __VIEWER__.show(){
     __VIEWER___title.render
     __VIEWER___fkeybar.row = $rows
     __VIEWER___fkeybar.width = $cols
-    __FKEYBAR_LABELS=("Help" "" "Quit" "" "" "" "" "" "" "Quit")
+    __FKEYBAR_LABELS=("Help" "" "Quit" "" "" "" "Search" "" "" "Quit")
     __VIEWER___fkeybar.render
 
     # Disable line wrap and lock scroll region to content area only.
@@ -256,6 +552,66 @@ __VIEWER__.show(){
         case "$key" in
             ESC|F3|F10)
                 break
+                ;;
+            F7)
+                tui.region.reset
+                tui.screen.wrap_on
+                __VIEWER__._search_dialog $rows $cols
+                local dlg_result=$?
+                tui.screen.wrap_off
+                tui.region.set 2 $(( rows - 1 ))
+                __VIEWER__.display_content
+                __VIEWER___title.render
+                __VIEWER___fkeybar.render
+                if [ $dlg_result -eq 0 ] && [ -n "$__VIEWER___search_pattern" ]; then
+                    if ! __VIEWER__._search_exec $scroll; then
+                        tui.region.reset
+                        tui.screen.wrap_on
+                        if __VIEWER__._search_not_found $rows $cols; then
+                            __VIEWER__._search_exec 0 || true
+                        fi
+                        tui.screen.wrap_off
+                        tui.region.set 2 $(( rows - 1 ))
+                        __VIEWER__.display_content
+                        __VIEWER___title.render
+                        __VIEWER___fkeybar.render
+                    fi
+                fi
+                ;;
+            n)
+                if [ -n "$__VIEWER___search_pattern" ]; then
+                    if ! __VIEWER__._search_exec $scroll; then
+                        tui.region.reset
+                        tui.screen.wrap_on
+                        if __VIEWER__._search_not_found $rows $cols; then
+                            __VIEWER__._search_exec 0 || true
+                        fi
+                        tui.screen.wrap_off
+                        tui.region.set 2 $(( rows - 1 ))
+                        __VIEWER__.display_content
+                        __VIEWER___title.render
+                        __VIEWER___fkeybar.render
+                    fi
+                fi
+                ;;
+            N)
+                if [ -n "$__VIEWER___search_pattern" ]; then
+                    __VIEWER___search_backwards=$(( 1 - __VIEWER___search_backwards ))
+                    if ! __VIEWER__._search_exec $scroll; then
+                        tui.region.reset
+                        tui.screen.wrap_on
+                        scroll=$total_lines
+                        if __VIEWER__._search_not_found $rows $cols; then
+                            __VIEWER__._search_exec $scroll || true
+                        fi
+                        tui.screen.wrap_off
+                        tui.region.set 2 $(( rows - 1 ))
+                        __VIEWER__.display_content
+                        __VIEWER___title.render
+                        __VIEWER___fkeybar.render
+                    fi
+                    __VIEWER___search_backwards=$(( 1 - __VIEWER___search_backwards ))
+                fi
                 ;;
             UP)
                 [ $scroll -gt 0 ] && scroll=$(( scroll - 1 ))

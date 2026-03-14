@@ -98,3 +98,7 @@ title(){
     local class_code=$(<"$HACKFM_DIR/title.class")
     . <(printf '%s' "${class_code//__TITLE__/$1}")
 }
+
+# Stub implementations — overridden by bus.mod when bus is loaded
+bus.pause_processing()  { return 0; }
+bus.resume_processing() { return 0; }

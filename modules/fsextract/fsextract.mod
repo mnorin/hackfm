@@ -82,7 +82,7 @@ fsextract.run() {
 
     # Title
     tui.cursor.move $dialog_row $((dialog_col + 2))
-    tui.color.bg_white; tui.color.black; tui.color.bold
+    tui.color.bg_white; tui.color.black
     printf " Extract "
     tui.color.reset
 
@@ -110,11 +110,11 @@ fsextract.run() {
         tui.color.reset
 
         tui.cursor.move $((dialog_row + 6)) $((dialog_col + dialog_width/2 - 9))
-        tui.color.bg_cyan; tui.color.black; tui.color.bold
-        printf "[ Extract ]"
+        tui.color.bg_cyan; tui.color.black
+        printf "[< Extract >]"
         tui.color.reset
-        tui.color.bg_white; tui.color.black; tui.color.bold
-        printf "   [Cancel]"
+        tui.color.bg_white; tui.color.black
+        printf "   [ Cancel ]"
         tui.color.reset
 
         local visible_cursor=$cursor_pos

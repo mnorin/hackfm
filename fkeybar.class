@@ -22,9 +22,11 @@ __FKEYBAR__.render(){
     local layer=$(__FKEYBAR__.active_layer)
     local row=$(__FKEYBAR__.row)
     local width=$(__FKEYBAR__.width)
+    local offset=$(( layer * 10 ))
 
     local labels=("${__FKEYBAR_LABELS[@]}")
-    while [ ${#labels[@]} -lt 10 ]; do
+    # Pad to at least offset+10 entries
+    while [ ${#labels[@]} -lt $(( offset + 10 )) ]; do
         labels+=("")
     done
 
@@ -39,7 +41,7 @@ __FKEYBAR__.render(){
 
     for i in {0..9}; do
         local num=$(( i + 1 ))
-        local label="${labels[$i]}"
+        local label="${labels[$(( i + offset ))]}"
 
         tui.color.white
         tui.color.bg_black
@@ -93,29 +95,32 @@ fkeybar.register_key_label() {
     fi
 }
 
-# Recompute __FKEYBAR_LABELS from registered keys for the current layer
+# Recompute __FKEYBAR_LABELS for all layers from registered keys
 fkeybar.update_labels() {
-    local i offset
-    offset=$(( $(main_fkeybar.active_layer) * 10 ))
+    local i layer total_layers
+    total_layers=$(fkeybar.layer_count)
     __FKEYBAR_LABELS=()
-    for ((i=1; i<=10; i++)); do
-        local key="F$(( i + offset ))"
-        local label=""
-        if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
-            local cb
-            for cb in ${__MODULE_KEY_LABEL_FUNCS[$key]}; do
-                __HACKFM_FKEY_LABEL=""
-                $cb
-                if [ -n "$__HACKFM_FKEY_LABEL" ]; then
-                    label="$__HACKFM_FKEY_LABEL"
-                    break
-                fi
-            done
-        fi
-        if [ -z "$label" ]; then
-            label="${__MODULE_KEY_LABELS[$key]:-}"
-        fi
-        __FKEYBAR_LABELS+=("$label")
+    for ((layer=0; layer<total_layers; layer++)); do
+        local offset=$(( layer * 10 ))
+        for ((i=1; i<=10; i++)); do
+            local key="F$(( i + offset ))"
+            local label=""
+            if [ -n "${__MODULE_KEY_LABEL_FUNCS[$key]+x}" ]; then
+                local cb
+                for cb in ${__MODULE_KEY_LABEL_FUNCS[$key]}; do
+                    __HACKFM_FKEY_LABEL=""
+                    $cb
+                    if [ -n "$__HACKFM_FKEY_LABEL" ]; then
+                        label="$__HACKFM_FKEY_LABEL"
+                        break
+                    fi
+                done
+            fi
+            if [ -z "$label" ]; then
+                label="${__MODULE_KEY_LABELS[$key]:-}"
+            fi
+            __FKEYBAR_LABELS+=("$label")
+        done
     done
 }
 
