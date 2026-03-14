@@ -28,8 +28,11 @@ bus.pre_init() {
 
     trap 'bus._handler' USR1
     bus._start_listener
+}
 
+bus.init() {
     # Self-manage pause/resume around terminal handoffs
+    # (broker is available by the time init runs)
     broker.subscribe "ui.terminal_opened" "bus.pause_processing"
     broker.subscribe "ui.terminal_closed" "bus.resume_processing"
 }
