@@ -217,13 +217,10 @@ __EDITOR__._search_dialog(){
             ENTER)
                 if [ $focus -eq 3 ]; then
                     tui.cursor.hide; return 1
-                elif [ $focus -eq 1 ]; then
-                    case_s=$(( 1 - case_s ))
-                else
-                    __EDITOR___search_pattern="$pattern"
-                    __EDITOR___search_case=$case_s
-                    tui.cursor.hide; return 0
                 fi
+                __EDITOR___search_pattern="$pattern"
+                __EDITOR___search_case=$case_s
+                tui.cursor.hide; return 0
                 ;;
             ESC)
                 tui.cursor.hide; return 1

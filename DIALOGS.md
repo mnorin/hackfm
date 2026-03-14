@@ -9,8 +9,10 @@
 | UP / DOWN      | Same as TAB / SHIFT-TAB (natural for vertical layout) |
 | LEFT / RIGHT   | Move between buttons only (natural for horizontal row)|
 | SPACE          | Toggle checkbox; activate focused button              |
-| ENTER          | Activate focused element; if focus is on a field or  |
-|                | checkbox, trigger the default button                  |
+| ENTER          | Always submits the dialog — triggers the default      |
+|                | button regardless of focus. If focus is on Cancel,    |
+|                | cancels instead. Never toggles checkboxes (use SPACE) |
+|                | and never advances input field focus (use TAB)        |
 | ESC            | Always cancels — equivalent to activating Cancel      |
 
 ## Visual Appearance
@@ -46,7 +48,7 @@ Use background color alone to indicate focus.
 - Checked:   `[x] Label`
 - Unchecked: `[ ] Label`
 - Focused:   cyan background on the whole `[x] Label` line
-- SPACE or ENTER toggles when focused
+- SPACE toggles when focused. ENTER submits the dialog, not toggles
 
 ## Layout
 
