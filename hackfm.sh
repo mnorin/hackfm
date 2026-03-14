@@ -358,6 +358,7 @@ execute_command() {
     cmd.clear
     
     # Switch to main screen for terminal output
+    broker.publish "ui.terminal_opened" ""
     tui.screen.main
     
     # Restore terminal to sane interactive mode
@@ -388,6 +389,7 @@ execute_command() {
     tui.screen.alt
     hackfm.read_term_size
     reload_both_panels
+    broker.publish "ui.terminal_closed" ""
 }
 
 # ============================================================================
