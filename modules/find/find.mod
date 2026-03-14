@@ -174,32 +174,18 @@ find._form_loop() {
                 tui.cursor.show
                 ;;
             ENTER)
-                case $focus in
-                    0|1|2|3|4)  # fields/checkboxes — trigger Find (default button)
-                        __FIND_QUERY_NAME="$name_val"
-                        __FIND_QUERY_CONTENT="$content_val"
-                        __FIND_START_DIR="$dir_val"
-                        __FIND_CASE_SENSITIVE=$case_val
-                        __FIND_SKIP_HIDDEN=$hidden_val
-                        tui.cursor.hide
-                        find._run_search
-                        return
-                        ;;
-                    5)  # Find button
-                        __FIND_QUERY_NAME="$name_val"
-                        __FIND_QUERY_CONTENT="$content_val"
-                        __FIND_START_DIR="$dir_val"
-                        __FIND_CASE_SENSITIVE=$case_val
-                        __FIND_SKIP_HIDDEN=$hidden_val
-                        tui.cursor.hide
-                        find._run_search
-                        return
-                        ;;
-                    6)  # Cancel
-                        broker.publish "dialog_closed" ""
-                        return
-                        ;;
-                esac
+                if [ $focus -eq 6 ]; then
+                    broker.publish "dialog_closed" ""
+                    return
+                fi
+                __FIND_QUERY_NAME="$name_val"
+                __FIND_QUERY_CONTENT="$content_val"
+                __FIND_START_DIR="$dir_val"
+                __FIND_CASE_SENSITIVE=$case_val
+                __FIND_SKIP_HIDDEN=$hidden_val
+                tui.cursor.hide
+                find._run_search
+                return
                 ;;
             LEFT)
                 if [ $focus -eq 6 ]; then focus=5; fi

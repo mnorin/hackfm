@@ -337,17 +337,12 @@ __VIEWER__._search_dialog(){
                     tui.cursor.hide
                     return 1
                 fi
-                if [ $focus -eq 1 ]; then case_s=$(( 1 - case_s ))
-                elif [ $focus -eq 2 ]; then back_s=$(( 1 - back_s ))
-                elif [ $focus -eq 3 ]; then whole_s=$(( 1 - whole_s ))
-                else
-                    __VIEWER___search_pattern="$pattern"
-                    __VIEWER___search_case=$case_s
-                    __VIEWER___search_backwards=$back_s
-                    __VIEWER___search_whole=$whole_s
-                    tui.cursor.hide
-                    return 0
-                fi
+                __VIEWER___search_pattern="$pattern"
+                __VIEWER___search_case=$case_s
+                __VIEWER___search_backwards=$back_s
+                __VIEWER___search_whole=$whole_s
+                tui.cursor.hide
+                return 0
                 ;;
             ESC)
                 tui.cursor.hide

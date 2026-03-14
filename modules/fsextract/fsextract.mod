@@ -109,7 +109,7 @@ fsextract.run() {
         printf "%-${field_width}s" "$display_input"
         tui.color.reset
 
-        tui.cursor.move $((dialog_row + 6)) $((dialog_col + dialog_width/2 - 9))
+        tui.cursor.move $((dialog_row + 7)) $((dialog_col + dialog_width/2 - 9))
         tui.color.bg_cyan; tui.color.black
         printf "[< Extract >]"
         tui.color.reset
