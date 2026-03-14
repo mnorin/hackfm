@@ -85,3 +85,14 @@ hackfm.bus.register_bgprocess() {
 
 # No-op — kept for compatibility if anything calls it
 bus._drain() { return 0; }
+
+# Pause message processing — block USR1 during critical sections like rendering
+bus.pause_processing() {
+    trap '' USR1
+}
+
+# Resume message processing — restore USR1 handler and flush any queued messages
+bus.resume_processing() {
+    trap 'bus._handler' USR1
+    bus._handler
+}

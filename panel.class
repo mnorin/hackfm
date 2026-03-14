@@ -541,6 +541,7 @@ __PANEL__.sort() {
 }
 
 __PANEL__.render(){
+    bus.pause_processing
     tui.cursor.hide
 
     local list=$(__PANEL__.list_source)
@@ -663,6 +664,7 @@ __PANEL__.render(){
     __PANEL__.draw_info_bar
 
     tui.cursor.hide
+    bus.resume_processing
 }
 
 # Quick search - interactive search mode with its own input loop
