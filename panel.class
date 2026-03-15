@@ -679,13 +679,14 @@ __PANEL__.quick_search(){
     # Enter search mode
     __PANEL__.mode = "search"
     __PANEL__.search_text = ""
-    
+
     # Save original position
     local original_selected=$($list.selected)
     local original_scroll=$($list.scroll)
-    
-    # Redraw panel to show search field
-    __PANEL__.render
+
+    # Just update the info bar to show search field — no need to redraw whole panel
+    __PANEL__.draw_info_bar
+    tui.cursor.show
     
     # Input loop for search
     while true; do
@@ -700,38 +701,7 @@ __PANEL__.quick_search(){
                 # Exit search mode
                 __PANEL__.mode = "navigation"
                 __PANEL__.search_text = ""
-                
-                # Just redraw the bottom filename bar (not whole panel)
-                local x=$(__PANEL__.x)
-                local y=$(__PANEL__.y)
-                local height=$(__PANEL__.height)
-                local width=$(__PANEL__.width)
-                
-                # Get selected filename
-                local selected=$($list.selected)
-                local selected_name=""
-                local count=$($list.count)
-                
-                if [ $count -gt 0 ]; then
-                    local fname ftype fsize ftime fexec fsel
-                    IFS='|' read -r fname ftype fsize ftime fexec fsel <<< "$($list.get $selected)"
-                    selected_name="$fname"
-                fi
-                
-                # Draw filename bar
-                local separator_row=$((y + height - 2))
-                tui.cursor.move $((separator_row + 1)) $((x + 1))
-                tui.color.bg_blue
-                tui.color.white
-                
-                # Truncate if needed
-                if [ ${#selected_name} -gt $width ]; then
-                    selected_name="${selected_name:0:$((width - 3))}..."
-                fi
-                
-                printf "%-${width}s" "$selected_name"
-                tui.style.reset
-                
+                __PANEL__.draw_info_bar
                 return 0
                 ;;
             BACKSPACE)
