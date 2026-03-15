@@ -5,6 +5,7 @@
 # Each $(tui.color.*) call forks a subshell; using variables eliminates that cost
 # across the inner loop of prerender_all_rows.
 _PC_BG_BLUE=$(tui.color.bg_blue)
+_PC_BG_WHITE=$(tui.color.bg_white)
 _PC_BG_CYAN=$(tui.color.bg_cyan)
 _PC_BLACK=$(tui.color.black)
 _PC_WHITE=$(tui.color.white)
@@ -113,6 +114,10 @@ __PANEL__.in_archive(){
 }
 # Array for pre-rendered file rows (cached for performance)
 declare -ag __PANEL___rendered_rows=()
+
+# Search field cursor position (set by draw_info_bar in search mode)
+__PANEL___search_cursor_row=0
+__PANEL___search_cursor_col=0
 
 # Render a single file row to a string (with escape codes)
 # Args: file_index
@@ -340,7 +345,8 @@ __PANEL__.process_message(){
             local list=$(__PANEL__.list_source)
             $list.clear_selection
             __PANEL__.prerender_all_rows
-            __PANEL__.render
+            __PANEL__._draw_rows
+            __PANEL__.draw_info_bar
             ;;
     esac
 }
@@ -433,6 +439,12 @@ __PANEL__.draw_info_bar(){
         tui.color.bg_cyan
         tui.color.black
         printf '%s' "$info_line"
+        # Store cursor position for search field focus
+        __PANEL___search_cursor_row=$(( separator_row + 1 ))
+        local prompt="Search: "
+        local visible_text_len=${#display_text}
+        [ $visible_text_len -gt $width ] && visible_text_len=$width
+        __PANEL___search_cursor_col=$(( x + 1 + visible_text_len ))
     else
         # Show filename
         local selected_name=""
@@ -472,28 +484,38 @@ __PANEL__.draw_header(){
     local width=$(__PANEL__.width)
     local active=$(__PANEL__.active)
     local path=$($list.path)
-    
-    # Draw header with path
-    tui.cursor.move $((y - 1)) $((x + 2))
-    
-    if [ $active -eq 1 ]; then
-        # Active panel: cyan/bold header
-        tui.style.bold
-        tui.color.cyan
-    else
-        # Inactive panel: white on blue (matches panel background)
-        tui.color.bg_blue
-        tui.color.white
-    fi
-    
-    # Truncate path if needed
+
     local max_path_len=$((width - 4))
     local display_path="$path"
     if [ ${#path} -gt $max_path_len ]; then
         display_path="...${path: -$((max_path_len - 3))}"
     fi
-    printf " %s " "$display_path"
-    tui.style.reset
+
+    # Pre-render the full header line as a single string
+    local header=""
+
+    # Left corner and dashes
+    header+="${_PC_BG_BLUE}${_PC_WHITE}┌──"
+
+    # Path with white background
+    if [ $active -eq 1 ]; then
+        header+="${_PC_BG_WHITE}${_PC_BLACK}"
+    else
+        header+="${_PC_BG_BLUE}${_PC_WHITE}"
+    fi
+    header+=" ${display_path} "
+
+    # Back to border color for right dashes and corner
+    header+="${_PC_BG_BLUE}${_PC_WHITE}"
+    local path_section_len=$(( ${#display_path} + 4 ))
+    local right_dashes=$(( width - path_section_len ))
+    local i
+    for ((i=0; i<right_dashes; i++)); do header+="─"; done
+    header+="┐${_PC_RESET}"
+
+    # Draw in one go
+    tui.cursor.move $((y - 1)) $x
+    printf '%b' "$header"
 }
 
 # Render panel
@@ -529,7 +551,12 @@ __PANEL__._draw_rows(){
     done
 }
 
-# Toggle sort order for a given field and re-render
+# Redraw content only: header, rows, info bar — no border redraw
+__PANEL__.redraw_content(){
+    __PANEL__.draw_header
+    __PANEL__._draw_rows
+    __PANEL__.draw_info_bar
+}
 # Usage: panel.sort name|date|size|ext
 __PANEL__.sort() {
     local field="$1"
@@ -685,7 +712,9 @@ __PANEL__.quick_search(){
     local original_scroll=$($list.scroll)
 
     # Just update the info bar to show search field — no need to redraw whole panel
+    tui.cursor.hide
     __PANEL__.draw_info_bar
+    tui.cursor.move $__PANEL___search_cursor_row $__PANEL___search_cursor_col
     tui.cursor.show
     
     # Input loop for search
@@ -694,6 +723,7 @@ __PANEL__.quick_search(){
         key=$(tui.input.key 2>&1) || {
             continue
         }
+        tui.cursor.hide
         local search_text=$(__PANEL__.search_text)
         
         case "$key" in
@@ -715,14 +745,9 @@ __PANEL__.quick_search(){
                     
                     # Search from beginning if text remains, else restore original position
                     if [ -n "$search_text" ]; then
-                        local _scroll_before=$($list.scroll)
                         __PANEL__._do_search "$search_text" || true
-                        if [ "$($list.scroll)" != "$_scroll_before" ]; then
-                            __PANEL__.render
-                        else
-                            __PANEL__._draw_rows
-                            __PANEL__.draw_info_bar
-                        fi
+                        __PANEL__._draw_rows
+                        __PANEL__.draw_info_bar
                     else
                         $list.selected = $original_selected
                         $list.scroll = $original_scroll
@@ -742,18 +767,16 @@ __PANEL__.quick_search(){
                     search_text="${search_text}${key}"
                     __PANEL__.search_text = "$search_text"
                     
-                    # Perform search — 0=found no scroll change, 1=not found, 2=scroll changed
+                    # Perform search
                     local _scroll_before=$($list.scroll)
                     __PANEL__._do_search "$search_text" || true
-                    if [ "$($list.scroll)" != "$_scroll_before" ]; then
-                        __PANEL__.render
-                    else
-                        __PANEL__._draw_rows
-                        __PANEL__.draw_info_bar
-                    fi
+                    __PANEL__._draw_rows
+                    __PANEL__.draw_info_bar
                 fi
                 ;;
         esac
+        tui.cursor.move $__PANEL___search_cursor_row $__PANEL___search_cursor_col
+        tui.cursor.show
     done
 }
 
@@ -868,8 +891,9 @@ __PANEL__.navigate(){
         __PANEL__.draw_info_bar
 
     elif [ $old_scroll -ne $new_scroll ]; then
-        # Scroll changed by more than 1 (page up/down, home/end) - full redraw
-        __PANEL__.render
+        # Scroll changed by more than 1 (page up/down, home/end) - redraw rows only
+        __PANEL__._draw_rows
+        __PANEL__.draw_info_bar
 
     else
         # No scroll change - just redraw the 2 affected rows
@@ -912,7 +936,7 @@ __PANEL__.goto(){
     cd "$new_path" 2>/dev/null || true
     $list.load
     __PANEL__.prerender_all_rows
-    __PANEL__.render
+    __PANEL__.redraw_content
     __PANEL__._publish_dir
 }
 
@@ -1063,7 +1087,7 @@ __PANEL__.enter(){
         if [ -z "$internal" ]; then
             # Exit archive mode
             __PANEL__._exit_archive
-            __PANEL__.render
+            __PANEL__.redraw_content
             __PANEL__._publish_dir
             __PANEL__.enter_result = "ok"
             return
@@ -1090,7 +1114,7 @@ __PANEL__.enter(){
             fi
             
             __PANEL__.prerender_all_rows
-            __PANEL__.render
+            __PANEL__.redraw_content
             __PANEL__.enter_result = "ok"
         elif [ "$filetype" = "f" ]; then
             # TODO: Extract file from archive for viewing
@@ -1129,7 +1153,7 @@ __PANEL__.enter(){
             __PANEL__.prerender_all_rows
         fi
 
-        __PANEL__.render
+        __PANEL__.redraw_content
         __PANEL__._publish_dir
         __PANEL__.enter_result = "ok"
     elif [ "$filetype" = "f" ] && [ "$list_type" = "filesystem" ]; then
@@ -1163,7 +1187,7 @@ __PANEL__.enter(){
             if [ -n "$probe_type" ]; then
                 # archive_path setter recognised the extension - enter archive mode
                 __PANEL__._enter_archive "$filename"
-                __PANEL__.render
+                __PANEL__.redraw_content
                 __PANEL__._publish_dir
                 __PANEL__.enter_result = "ok"
             elif [ -x "$filepath" ]; then
