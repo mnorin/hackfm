@@ -1,6 +1,12 @@
 #!/bin/bash
 # hackfm.sh - Hackable File Manager
 
+# Guard against starting hackfm from within hackfm
+if [ -n "$HACKFM_DIR" ]; then
+    echo "It seems HackFM is already running. Exiting."
+    exit 1
+fi
+
 # Get HackFM installation directory (for sourcing class files)
 export HACKFM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export HACKFM_RUNNING=1
