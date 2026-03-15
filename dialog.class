@@ -355,13 +355,16 @@ __DIALOG__.show_status(){
 
     # Message (centered)
     local inner_width=$(( dialog_width - 4 ))
-    local msg_len=${#message}
-    [ $msg_len -gt $inner_width ] && msg_len=$inner_width
-    local padding=$(( (inner_width - msg_len) / 2 ))
+    local msg_bytes=${#message}
+    [ $msg_bytes -gt $inner_width ] && message="${message:0:$inner_width}"
+    local msg_bytes=${#message}
+    local padding=$(( (inner_width - msg_bytes) / 2 ))
     [ $padding -lt 0 ] && padding=0
+    local right_pad=$(( inner_width - msg_bytes - padding ))
+    [ $right_pad -lt 0 ] && right_pad=0
     tui.cursor.move $((dialog_row + 2)) $((dialog_col + 2))
     tui.color.bg_white; tui.color.black
-    printf "%${padding}s%-${inner_width}s" "" "$message"
+    printf "%${padding}s%s%${right_pad}s" "" "$message" ""
     tui.color.reset
 }
 
