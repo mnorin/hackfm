@@ -478,7 +478,10 @@ __VIEWER__.show(){
     title __VIEWER___title
     fkeybar __VIEWER___fkeybar
 
-    hackfm.read_term_size
+    local size
+    size=$(tui.screen.size)
+    __HACKFM_ROWS=${size% *}
+    __HACKFM_COLS=${size#* }
     tui.cursor.hide
     local rows=$__HACKFM_ROWS
     local cols=$__HACKFM_COLS

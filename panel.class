@@ -378,6 +378,7 @@ __PANEL__._publish_dir(){
 # Handle incoming broker messages
 __PANEL__.register(){
     local broker="$1"
+    __PANEL__.message_broker = "$broker"
     $broker.subscribe "dialog_closed"      "__PANEL__"
     $broker.subscribe "viewer_closed"      "__PANEL__"
     $broker.subscribe "editor_closed"      "__PANEL__"

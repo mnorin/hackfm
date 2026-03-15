@@ -89,8 +89,8 @@ ORIGINAL_STTY=""
 PANELS=("left_panel" "right_panel")
 
 # Terminal dimensions — set by hackfm.read_term_size
-__HACKFM_ROWS=24
-__HACKFM_COLS=80
+export __HACKFM_ROWS=24
+export __HACKFM_COLS=80
 
 # Read current terminal size into __HACKFM_ROWS / __HACKFM_COLS
 hackfm.read_term_size() {
@@ -98,7 +98,7 @@ hackfm.read_term_size() {
     size=$(tui.screen.size)
     __HACKFM_ROWS=${size% *}
     __HACKFM_COLS=${size#* }
-    stty -ixon 2>/dev/null
+    export __HACKFM_ROWS __HACKFM_COLS
 }
 
 # Top-level object instantiation — declarative, order matters for dependencies
@@ -228,8 +228,8 @@ init() {
     # Save original terminal settings before TUI takes over
     ORIGINAL_STTY=$(stty -g 2>/dev/null)
 
-    # Disable echo for entire app lifetime
-    stty -echo 2>/dev/null
+    # Disable echo and flow control for entire app lifetime
+    stty -echo -ixon 2>/dev/null
 
     # Switch to alternate screen
     tui.screen.alt
@@ -263,10 +263,11 @@ init() {
     cmd.register broker
 
     # Subscribe to broker topics
-    broker.subscribe "viewer_closed"       "draw_main_frame"
-    broker.subscribe "editor_closed"       "draw_main_frame"
-    broker.subscribe "ui.terminal_closed"  "hackfm_redraw_title"
-    broker.subscribe "ui.terminal_closed"  "hackfm_redraw_fkeybar"
+    broker.subscribe "viewer_closed"              "draw_main_frame"
+    broker.subscribe "editor_closed"              "draw_main_frame"
+    broker.subscribe "ui.terminal_closed"         "hackfm_redraw_title"
+    broker.subscribe "ui.terminal_closed"         "hackfm_redraw_fkeybar"
+    broker.subscribe "panel.active.dir_changed"   "hackfm_redraw_fkeybar"
 
     # Init non-module components that need broker
     # (openhandler no longer needs broker init)
