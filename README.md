@@ -109,7 +109,7 @@ Press Enter to navigate into and out of archives. Copy from inside an archive to
 ### Command Line
 - Integrated command line at the bottom of the screen
 - Commands run in the current directory of the active panel
-- Ctrl+O toggles between file manager and a full interactive bash session
+- Ctrl+O drops to a full interactive bash session. Press Ctrl+O again inside that session to return to hackfm
 - Ctrl+Up / Ctrl+Down scroll through command history
 - Ctrl+/ inserts the path of the selected file into the command line
 - Ctrl+R reloads the active panel
@@ -220,7 +220,7 @@ Modules can register keys on any layer. Additional layers are created automatica
 
 | Key | Action |
 |-----|--------|
-| Ctrl+O | Toggle terminal (full interactive bash session) |
+| Ctrl+O | Drop to interactive bash session (Ctrl+O to return) |
 | Ctrl+R | Reload active panel |
 | Ctrl+S | Quick sort menu |
 | Ctrl+A | File attributes |
@@ -410,6 +410,7 @@ module_find_enabled=1
 module_quickdir_enabled=1
 module_usermenu_enabled=1
 module_vimhook_enabled=1
+module_terminal_enabled=1
 ```
 
 ### conf/colors.conf
@@ -532,6 +533,9 @@ User-defined menu (F2). Shows a popup list of custom commands defined in `conf/u
 "c" "Copy path to clip"  "echo %f | xclip -selection clipboard" background
 ```
 
+### terminal
+Interactive bash session (Ctrl+O). Drops hackfm to a full bash shell in the same terminal. Press Ctrl+O again inside the shell to return to hackfm. The panel reloads on return to pick up any filesystem changes made during the shell session. Disable with `module_terminal_enabled=0` in `conf/hackfm.conf`.
+
 ### vimhook
 Open the selected file in Vim (Layer 1, physical F4 = F14). A simple example of
 F-key layer registration. Requires `vim` to be installed. Disable by setting
@@ -567,6 +571,7 @@ hackfm is built from small, single-responsibility bash classes using the
 
 ### Modules (`modules/`)
 - `bus/` — message broker initialisation
+- `terminal/` — interactive bash session via Ctrl+O
 - `viewer/` — viewer.class, viewhandler.class, viewer.sh (subprocess)
 - `editor/` — editor.class, edithandler.class, editor.sh (subprocess)
 - `colors/` — colorpanel.class (overrides panel row rendering via pre_init)
