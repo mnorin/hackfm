@@ -115,7 +115,7 @@ __PANEL__.render_row_string(){
     elif [ $is_marked_file -eq 1 ]; then
         row+="$_PC_YELLOW$_PC_BOLD"
     else
-        row+="$_PC_WHITE"
+        row+="$file_color"
     fi
     row+="$(printf "%${size_col_width}s" "$item_size")"
 
@@ -135,7 +135,7 @@ __PANEL__.render_row_string(){
     elif [ $is_marked_file -eq 1 ]; then
         row+="$_PC_YELLOW$_PC_BOLD"
     else
-        row+="$_PC_WHITE"
+        row+="$file_color"
     fi
     local display_time="${item_time:0:$time_col_width}"
     row+="$(printf "%-${time_col_width}s" "$display_time")"
