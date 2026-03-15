@@ -51,6 +51,7 @@ bus.on_exit() {
 bus._handler() {
     trap - ERR
     [ -f "$__HACKFM_FIFO_INBOX" ] || return
+    declare -F "broker.publish" &>/dev/null || return
     local _data
     _data=$(cat "$__HACKFM_FIFO_INBOX" 2>/dev/null) || true
     > "$__HACKFM_FIFO_INBOX"
