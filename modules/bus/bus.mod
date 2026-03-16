@@ -19,8 +19,8 @@ __HACKFM_FIFO_INBOX=""
 
 bus.pre_init() {
     mkdir -p "$HACKFM_DIR/run"
-    __HACKFM_FIFO="$HACKFM_DIR/run/bus.fifo"
-    __HACKFM_FIFO_INBOX="$HACKFM_DIR/run/bus.inbox"
+    __HACKFM_FIFO="$HACKFM_DIR/run/bus.$$.fifo"
+    __HACKFM_FIFO_INBOX="$HACKFM_DIR/run/bus.$$.inbox"
 
     rm -f "$__HACKFM_FIFO" "$__HACKFM_FIFO_INBOX"
     mkfifo "$__HACKFM_FIFO"
