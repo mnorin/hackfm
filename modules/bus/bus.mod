@@ -4,35 +4,45 @@
 # Provides a FIFO-based message bus for background processes to publish
 # broker messages into the main hackfm process.
 #
-# Background processes write "topic:data" lines to $__HACKFM_FIFO.
-# A listener process reads them, appends to an inbox file, and sends SIGUSR1
-# to the main process. The SIGUSR1 handler drains the inbox and dispatches
-# via the broker, deduplicating by topic so stale messages don't pile up.
+# Architecture:
+#   - FIFO opened read-write on fd 9 (kernel-managed buffer, no files accumulate)
+#   - Writers append "topic:data\n" directly to fd 9
+#   - A timer process sends SIGUSR1 every N seconds (configurable: bus_timer_interval)
+#   - The USR1 handler drains fd 9 non-blocking, deduplicates by topic, dispatches via broker
+#   - During renders, USR1 is blocked (bus.pause_processing) and flushed on resume
+#
+# fd 9 is reserved for the message bus FIFO.
+# Runtime files: $XDG_RUNTIME_DIR/hackfm.$$/bus.fifo (cleaned up on exit)
 #
 # API for other modules:
 #   hackfm.bus.register_bgprocess PID  — register bg PID for cleanup on exit
-#   $__HACKFM_FIFO                     — path to write messages to
+#   printf 'topic:data\n' >&9          — publish a message from any subprocess
 
 declare -ag __HACKFM_FIFO_BGPIDS=()
 __HACKFM_FIFO=""
-__HACKFM_FIFO_INBOX=""
+__HACKFM_BUS_INTERVAL=1
 
 bus.pre_init() {
-    mkdir -p "$HACKFM_DIR/run"
-    __HACKFM_FIFO="$HACKFM_DIR/run/bus.fifo"
-    __HACKFM_FIFO_INBOX="$HACKFM_DIR/run/bus.inbox"
+    local runtime_dir="${XDG_RUNTIME_DIR:-/tmp}/hackfm.$$"
+    mkdir -p "$runtime_dir"
+    __HACKFM_FIFO="$runtime_dir/bus.fifo"
 
-    rm -f "$__HACKFM_FIFO" "$__HACKFM_FIFO_INBOX"
+    rm -f "$__HACKFM_FIFO"
     mkfifo "$__HACKFM_FIFO"
-    > "$__HACKFM_FIFO_INBOX"
+
+    # Open FIFO read-write on fd 9 — prevents blocking on both read and write
+    exec 9<>"$__HACKFM_FIFO"
 
     trap 'bus._handler' USR1
-    bus._start_listener
+    bus._start_timer
 }
 
 bus.init() {
-    # Self-manage pause/resume around terminal handoffs
-    # (broker is available by the time init runs)
+    # Read timer interval from hackfm.conf
+    local val
+    val=$(grep -m1 '^bus_timer_interval=' "$HACKFM_DIR/conf/hackfm.conf" 2>/dev/null | cut -d= -f2-)
+    [ -n "$val" ] && __HACKFM_BUS_INTERVAL="$val"
+
     broker.subscribe "ui.terminal_opened" "bus.pause_processing"
     broker.subscribe "ui.terminal_closed" "bus.resume_processing"
 }
@@ -45,27 +55,25 @@ bus.on_exit() {
     for pid in "${__HACKFM_FIFO_BGPIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
-    rm -f "$__HACKFM_FIFO" "$__HACKFM_FIFO_INBOX"
+    exec 9>&-
+    rm -f "$__HACKFM_FIFO"
+    rmdir "$(dirname "$__HACKFM_FIFO")" 2>/dev/null || true
 }
 
 bus._handler() {
     trap - ERR
-    [ -f "$__HACKFM_FIFO_INBOX" ] || return
     declare -F "broker.publish" &>/dev/null || return
-    local _data
-    _data=$(cat "$__HACKFM_FIFO_INBOX" 2>/dev/null) || true
-    > "$__HACKFM_FIFO_INBOX"
 
-    # Deduplicate by topic — keep only the last message per topic
+    # Drain FIFO non-blocking — read all available lines from fd 9
     local -A _seen=()
     local -a _ordered=()
     local _msg _topic
-    while IFS= read -r _msg; do
+    while IFS= read -r -t 0.01 _msg <&9; do
         [ -z "$_msg" ] && continue
         _topic="${_msg%%:*}"
         [ -z "${_seen[$_topic]+x}" ] && _ordered+=("$_topic")
         _seen["$_topic"]="${_msg#*:}"
-    done <<< "$_data"
+    done
 
     for _topic in "${_ordered[@]}"; do
         broker.publish "$_topic" "${_seen[$_topic]}"
@@ -73,17 +81,13 @@ bus._handler() {
     trap 'error_handler $LINENO' ERR
 }
 
-bus._start_listener() {
-    local fifo="$__HACKFM_FIFO"
-    local inbox="$__HACKFM_FIFO_INBOX"
+bus._start_timer() {
     local mainpid="$$"
+    local interval="$__HACKFM_BUS_INTERVAL"
     (
-        exec 8<>"$fifo"
-        while IFS= read -r _line <&8; do
-            if [ -n "$_line" ]; then
-                printf '%s\n' "$_line" >> "$inbox"
-                kill -USR1 "$mainpid" 2>/dev/null || exit 0
-            fi
+        while true; do
+            sleep "$interval"
+            kill -USR1 "$mainpid" 2>/dev/null || exit 0
         done
     ) &
     hackfm.bus.register_bgprocess $!
@@ -93,9 +97,6 @@ bus._start_listener() {
 hackfm.bus.register_bgprocess() {
     __HACKFM_FIFO_BGPIDS+=("$1")
 }
-
-# No-op — kept for compatibility if anything calls it
-bus._drain() { return 0; }
 
 # Pause message processing — block USR1 during critical sections like rendering
 bus.pause_processing() {
