@@ -53,13 +53,13 @@ titled._on_menu_closed() {
 titled._on_menu_closed.process_message()  { titled._on_menu_closed; }
 
 titled._start_loop() {
-    local fifo="$__HACKFM_FIFO"
+    local mainpid="$$"
     (
         while true; do
             local text
             text=$(eval "$__TITLED_CMD" 2>/dev/null) || true
             if [ -n "$text" ]; then
-                timeout 1 bash -c "printf 'title.update:%s\n' \"\$1\" >> \"\$2\"" -- "$text" "$fifo" 2>/dev/null || true
+                printf 'title.update:%s\n' "$text" >&9 2>/dev/null || true
             fi
             sleep "$__TITLED_INTERVAL"
         done
