@@ -259,9 +259,22 @@ __PANEL__.render_row_string(){
 __PANEL__.prerender_all_rows(){
     local list=$(__PANEL__.list_source)
     local count=$($list.count)
-    __PANEL___rendered_rows=()
+    local height=$(__PANEL__.height)
+    local max_visible=$((height - 3))
+    local scroll=$($list.scroll)
+    
+    # Render only visible window + 20 rows buffer (above and below)
+    local start=$((scroll - 20))
+    [ $start -lt 0 ] && start=0
+    local end=$((scroll + max_visible + 20))
+    [ $end -ge $count ] && end=$((count - 1))
 
-    . <(for ((i=0; i<count; i++)); do
+    # We still need to initialize the array or at least ensure we don't have stale data
+    # but we don't need to clear the WHOLE array every time if we're careful.
+    # However, for simplicity and safety, we'll keep the logic clean.
+    
+    # Pre-render the window in parallel
+    . <(for ((i=start; i<=end; i++)); do
         echo "__PANEL___rendered_rows[$i]=$(printf '%q' "$(__PANEL__.render_row_string $i)")" &
     done; wait)
 
@@ -588,6 +601,9 @@ __PANEL__._draw_rows(){
     local size_col_width=9
     local name_col_width=$((width - time_col_width - size_col_width - 2))
 
+    # Ensure visible window is pre-rendered
+    __PANEL__.prerender_all_rows
+
     for ((i=0; i<max_visible; i++)); do
         local file_idx=$((scroll + i))
         tui.cursor.move $((y + 1 + i)) $x
@@ -850,6 +866,11 @@ __PANEL__.navigate(){
     if [ $old_selected -ne $new_selected ]; then
         __PANEL___rendered_rows[$old_selected]=$(__PANEL__.render_row_string $old_selected)
         __PANEL___rendered_rows[$new_selected]=$(__PANEL__.render_row_string $new_selected)
+    fi
+
+    # Ensure cache is filled if scroll changed
+    if [ $old_scroll -ne $new_scroll ]; then
+        __PANEL__.prerender_all_rows
     fi
 
     if [ $scroll_delta -eq 1 ] || [ $scroll_delta -eq -1 ]; then

@@ -64,12 +64,12 @@ declare -ag __FILELIST___index_ext_desc=()
 __FILELIST__.load(){
     local path=$(__FILELIST__.path)
 
-    # Save currently marked filenames before clearing
-    local -a saved_marked_names=()
+    # Save currently marked filenames before clearing using an associative array for O(1) lookup
+    local -A saved_marked_names=()
     local i
     for ((i=0; i<${#__FILELIST___files[@]}; i++)); do
         if [ "${__FILELIST___marked[$i]}" = "1" ]; then
-            saved_marked_names+=("${__FILELIST___files[$i]}")
+            saved_marked_names["${__FILELIST___files[$i]}"]="1"
         fi
     done
 
@@ -113,72 +113,57 @@ __FILELIST__.load(){
         __FILELIST___link_targets+=("")
     fi
     
-    # Get all entries and categorize them
+    # Get all entries and categorize them in a single pass using find -printf
     local -a dot_dirs=()
     local -a reg_dirs=()
     local -a dot_files=()
     local -a reg_files=()
     
-    # Get directories
-    while IFS= read -r -d '' entry; do
-        local basename=$(basename "$entry")
-        local mtime_raw=$(stat -c '%y' "$entry" 2>/dev/null)
-        # Extract first 16 chars of "YYYY-MM-DD HH:MM:SS" (drops fractional seconds)
-        local mtime="${mtime_raw:0:16}"
-        local link_target=""
+    # We use $path/ (trailing slash) to ensure find descends into it even if it is a symlink.
+    # %y=type, %s=size, %TY-%Tm-%Td %TH:%TM=mtime, %f=basename, %l=linktarget
+    while IFS='|' read -r -d '' type size mtime name link; do
+        [ -z "$name" ] && [ "$type" != "d" ] && continue
+        [ "$name" = "." ] && continue
         
-        # Check if it's a symlink
-        if [ -L "$entry" ]; then
-            link_target=$(readlink "$entry" 2>/dev/null)
+        local is_dir=0
+        if [ "$type" = "d" ]; then
+            is_dir=1
+        elif [ "$type" = "l" ]; then
+            # For symlinks, check if target is a directory
+            [ -d "$path/$name" ] && is_dir=1
         fi
-        
-        if [[ "$basename" == .* ]]; then
-            dot_dirs+=("$basename|SUB-DIR|$mtime|$link_target")
+
+        if [ $is_dir -eq 1 ]; then
+            if [[ "$name" == .* ]]; then
+                dot_dirs+=("$name|SUB-DIR|$mtime|$link")
+            else
+                reg_dirs+=("$name|SUB-DIR|$mtime|$link")
+            fi
         else
-            reg_dirs+=("$basename|SUB-DIR|$mtime|$link_target")
+            # Check if executable
+            local is_exec=0
+            [ -x "$path/$name" ] && is_exec=1
+
+            # Format size
+            local size_str
+            if [ "$size" -lt 1000000 ]; then
+                size_str="$size"
+            elif [ "$size" -lt 1000000000 ]; then
+                size_str="$((size / 1024))K"
+            else
+                size_str="$((size / 1048576))M"
+            fi
+            
+            if [[ "$name" == .* ]]; then
+                dot_files+=("$name|$size_str|$mtime|$is_exec|$link")
+            else
+                reg_files+=("$name|$size_str|$mtime|$is_exec|$link")
+            fi
         fi
-    done < <(find -L "$path" -maxdepth 1 -type d ! -samefile "$path" -print0 2>/dev/null | sort -z)
-    
-    # Get files
-    while IFS= read -r -d '' entry; do
-        local basename=$(basename "$entry")
-        local size=$(stat -c '%s' "$entry" 2>/dev/null)
-        local mtime_raw=$(stat -c '%y' "$entry" 2>/dev/null)
-        # Extract first 16 chars of "YYYY-MM-DD HH:MM:SS"
-        local mtime="${mtime_raw:0:16}"
-        local is_exec=0
-        local link_target=""
-        
-        # Check if it's a symlink
-        if [ -L "$entry" ]; then
-            link_target=$(readlink "$entry" 2>/dev/null)
-        fi
-        
-        # Check if executable
-        if [ -x "$entry" ]; then
-            is_exec=1
-        fi
-        
-        # Format size - show full number while it fits in the 9-char size column,
-        # switch to K or M only when the plain number would overflow
-        local size_str
-        if [ $size -lt 1000000 ]; then
-            size_str="$size"
-        elif [ $size -lt 1000000000 ]; then
-            size_str="$((size / 1024))K"
-        else
-            size_str="$((size / 1048576))M"
-        fi
-        
-        if [[ "$basename" == .* ]]; then
-            dot_files+=("$basename|$size_str|$mtime|$is_exec|$link_target")
-        else
-            reg_files+=("$basename|$size_str|$mtime|$is_exec|$link_target")
-        fi
-    done < <(find -L "$path" -maxdepth 1 -type f -print0 2>/dev/null | sort -z)
+    done < <(find "$path/" -maxdepth 1 -mindepth 1 -printf "%y|%s|%TY-%Tm-%Td %TH:%TM|%f|%l\0" 2>/dev/null | sort -z -t'|' -k4)
     
     # Add in MC order: dot-dirs, dirs, dot-files, files
-    for entry in "${dot_dirs[@]}"; do
+    for entry in "${dot_dirs[@]}" "${reg_dirs[@]}"; do
         IFS='|' read -r name size mtime link_target <<< "$entry"
         __FILELIST___files+=("$name")
         __FILELIST___types+=("d")
@@ -189,29 +174,7 @@ __FILELIST__.load(){
         __FILELIST___link_targets+=("$link_target")
     done
     
-    for entry in "${reg_dirs[@]}"; do
-        IFS='|' read -r name size mtime link_target <<< "$entry"
-        __FILELIST___files+=("$name")
-        __FILELIST___types+=("d")
-        __FILELIST___sizes+=("$size")
-        __FILELIST___times+=("$mtime")
-        __FILELIST___execs+=("0")
-        __FILELIST___marked+=("0")
-        __FILELIST___link_targets+=("$link_target")
-    done
-    
-    for entry in "${dot_files[@]}"; do
-        IFS='|' read -r name size mtime is_exec link_target <<< "$entry"
-        __FILELIST___files+=("$name")
-        __FILELIST___types+=("f")
-        __FILELIST___sizes+=("$size")
-        __FILELIST___times+=("$mtime")
-        __FILELIST___execs+=("$is_exec")
-        __FILELIST___marked+=("0")
-        __FILELIST___link_targets+=("$link_target")
-    done
-    
-    for entry in "${reg_files[@]}"; do
+    for entry in "${dot_files[@]}" "${reg_files[@]}"; do
         IFS='|' read -r name size mtime is_exec link_target <<< "$entry"
         __FILELIST___files+=("$name")
         __FILELIST___types+=("f")
@@ -235,30 +198,24 @@ __FILELIST__.load(){
     # Build all sort indices
     __FILELIST__._build_sort_indices
 
-    # Restore marks for files that still exist
-    if [ ${#saved_marked_names[@]} -gt 0 ]; then
-        local marked_count=0
-        local marked_size=0
-        for ((i=0; i<${#__FILELIST___files[@]}; i++)); do
-            local fname="${__FILELIST___files[$i]}"
-            local name
-            for name in "${saved_marked_names[@]}"; do
-                if [ "$name" = "$fname" ]; then
-                    __FILELIST___marked[$i]="1"
-                    marked_count=$((marked_count + 1))
-                    if [ "${__FILELIST___types[$i]}" = "f" ]; then
-                        local item_size="${__FILELIST___sizes[$i]}"
-                        local size_bytes
-                        size_bytes=$(__FILELIST__._size_to_bytes "$item_size")
-                        marked_size=$((marked_size + size_bytes))
-                    fi
-                    break
-                fi
-            done
-        done
-        __FILELIST__.property marked_count = $marked_count
-        __FILELIST__.property marked_size = $marked_size
-    fi
+    # Restore marks for files that still exist - O(N) using the associative array
+    local marked_count=0
+    local marked_size=0
+    for ((i=0; i<${#__FILELIST___files[@]}; i++)); do
+        local fname="${__FILELIST___files[$i]}"
+        if [ -n "${saved_marked_names[$fname]+x}" ]; then
+            __FILELIST___marked[$i]="1"
+            marked_count=$((marked_count + 1))
+            if [ "${__FILELIST___types[$i]}" = "f" ]; then
+                local item_size="${__FILELIST___sizes[$i]}"
+                local size_bytes
+                size_bytes=$(__FILELIST__._size_to_bytes "$item_size")
+                marked_size=$((marked_size + size_bytes))
+            fi
+        fi
+    done
+    __FILELIST__.property marked_count = $marked_count
+    __FILELIST__.property marked_size = $marked_size
 }
 
 # Build all sort index arrays
