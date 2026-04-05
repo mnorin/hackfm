@@ -81,6 +81,7 @@ __FILELIST__.load(){
     __FILELIST___execs=()
     __FILELIST___marked=()
     __FILELIST___link_targets=()
+    __FILELIST___raw_sizes=()
     __FILELIST__.selected = 0
     __FILELIST__.scroll = 0
     __FILELIST__.property marked_size = 0
@@ -155,9 +156,9 @@ __FILELIST__.load(){
             fi
             
             if [[ "$name" == .* ]]; then
-                dot_files+=("$name|$size_str|$mtime|$is_exec|$link")
+                dot_files+=("$name|$size_str|$mtime|$is_exec|$link|$size")
             else
-                reg_files+=("$name|$size_str|$mtime|$is_exec|$link")
+                reg_files+=("$name|$size_str|$mtime|$is_exec|$link|$size")
             fi
         fi
     done < <(find "$path/" -maxdepth 1 -mindepth 1 -printf "%y|%s|%TY-%Tm-%Td %TH:%TM|%f|%l\0" 2>/dev/null | sort -z -t'|' -k4)
@@ -172,10 +173,11 @@ __FILELIST__.load(){
         __FILELIST___execs+=("0")
         __FILELIST___marked+=("0")
         __FILELIST___link_targets+=("$link_target")
+        __FILELIST___raw_sizes+=("0")
     done
     
     for entry in "${dot_files[@]}" "${reg_files[@]}"; do
-        IFS='|' read -r name size mtime is_exec link_target <<< "$entry"
+        IFS='|' read -r name size mtime is_exec link_target raw_size <<< "$entry"
         __FILELIST___files+=("$name")
         __FILELIST___types+=("f")
         __FILELIST___sizes+=("$size")
@@ -183,6 +185,7 @@ __FILELIST__.load(){
         __FILELIST___execs+=("$is_exec")
         __FILELIST___marked+=("0")
         __FILELIST___link_targets+=("$link_target")
+        __FILELIST___raw_sizes+=("$raw_size")
     done
     
     # Empty check
@@ -228,14 +231,18 @@ __FILELIST__._build_sort_indices(){
     local -a entries_size=()
     local -a entries_ext=()
     
+    local -a special_indices=()
+    local _pad="00000000000000000000"
+
     for ((i=0; i<count; i++)); do
         local filename="${__FILELIST___files[$i]}"
         local filetype="${__FILELIST___types[$i]}"
-        local filesize="${__FILELIST___sizes[$i]}"
         local filetime="${__FILELIST___times[$i]}"
+        local size_num="${__FILELIST___raw_sizes[$i]}"
         
         # Skip special entries from sorting
         if [[ "$filename" == ".." || "$filename" == "<empty>" ]]; then
+            special_indices+=("$i")
             continue
         fi
         
@@ -252,27 +259,14 @@ __FILELIST__._build_sort_indices(){
             ext="${filename##*.}"
         fi
         
-        # Numeric size for sorting (convert back from formatted)
-        local size_num=0
-        if [[ "$filesize" =~ ^([0-9]+)([KM])$ ]]; then
-            local num="${BASH_REMATCH[1]}"
-            local unit="${BASH_REMATCH[2]}"
-            case "$unit" in
-                K) size_num=$((num * 1024)) ;;
-                M) size_num=$((num * 1048576)) ;;
-            esac
-        elif [[ "$filesize" =~ ^([0-9]+)$ ]]; then
-            size_num="${BASH_REMATCH[1]}"
-        fi
+        # Zero-pad size_num for string sorting (faster than printf)
+        local padded_size="${_pad:0:$((20 - ${#size_num}))}${size_num}"
         
         # Build sort keys: field<TAB>index
-        # Name sort: dot_key groups dotfiles/dotdirs at top of their group,
-        #            then sort by full filename (including dot) case-insensitively
         local name_key="$filename"
         entries_name+=("${type_key}|${dot_key}|${name_key}"$'\t'"$i")
-        # Date/size/ext: no dot_key - all entries sort together within dirs/files
         entries_date+=("${type_key}|${filetime}|${filename}"$'\t'"$i")
-        entries_size+=("${type_key}|$(printf '%020d' $size_num)|${filename}"$'\t'"$i")
+        entries_size+=("${type_key}|${padded_size}|${filename}"$'\t'"$i")
         entries_ext+=("${type_key}|${ext}|${name_key}"$'\t'"$i")
     done
     
@@ -293,37 +287,25 @@ __FILELIST__._build_sort_indices(){
         __FILELIST___index_ext_asc+=("$idx")
     done < <(printf '%s\n' "${entries_ext[@]}" | LC_ALL=C sort -t'|' -k1,1 -k2,2 -k3,3)
     
+    # Handle special entries (.., <empty>) - prepend to all indices efficiently
+    if [ ${#special_indices[@]} -gt 0 ]; then
+        # Sort specials by index descending so when we prepend, they end up in original order at top
+        local s_idx
+        for ((s_idx=${#special_indices[@]}-1; s_idx>=0; s_idx--)); do
+            local i="${special_indices[$s_idx]}"
+            __FILELIST___index_name_asc=("$i" "${__FILELIST___index_name_asc[@]}")
+            __FILELIST___index_date_asc=("$i" "${__FILELIST___index_date_asc[@]}")
+            __FILELIST___index_size_asc=("$i" "${__FILELIST___index_size_asc[@]}")
+            __FILELIST___index_ext_asc=("$i" "${__FILELIST___index_ext_asc[@]}")
+        done
+    fi
+
     # Descending order is just reversed
     for ((i=${#__FILELIST___index_name_asc[@]}-1; i>=0; i--)); do
         __FILELIST___index_name_desc+=("${__FILELIST___index_name_asc[$i]}")
-    done
-    
-    for ((i=${#__FILELIST___index_date_asc[@]}-1; i>=0; i--)); do
         __FILELIST___index_date_desc+=("${__FILELIST___index_date_asc[$i]}")
-    done
-    
-    for ((i=${#__FILELIST___index_size_asc[@]}-1; i>=0; i--)); do
         __FILELIST___index_size_desc+=("${__FILELIST___index_size_asc[$i]}")
-    done
-    
-    for ((i=${#__FILELIST___index_ext_asc[@]}-1; i>=0; i--)); do
         __FILELIST___index_ext_desc+=("${__FILELIST___index_ext_asc[$i]}")
-    done
-    
-    # Handle special entries (.., <empty>) - prepend to all indices
-    for ((i=0; i<count; i++)); do
-        local filename="${__FILELIST___files[$i]}"
-        if [[ "$filename" == ".." || "$filename" == "<empty>" ]]; then
-            # Prepend special entries to all index arrays
-            __FILELIST___index_name_asc=("$i" "${__FILELIST___index_name_asc[@]}")
-            __FILELIST___index_name_desc=("$i" "${__FILELIST___index_name_desc[@]}")
-            __FILELIST___index_date_asc=("$i" "${__FILELIST___index_date_asc[@]}")
-            __FILELIST___index_date_desc=("$i" "${__FILELIST___index_date_desc[@]}")
-            __FILELIST___index_size_asc=("$i" "${__FILELIST___index_size_asc[@]}")
-            __FILELIST___index_size_desc=("$i" "${__FILELIST___index_size_desc[@]}")
-            __FILELIST___index_ext_asc=("$i" "${__FILELIST___index_ext_asc[@]}")
-            __FILELIST___index_ext_desc=("$i" "${__FILELIST___index_ext_desc[@]}")
-        fi
     done
 }
 

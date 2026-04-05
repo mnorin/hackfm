@@ -30,6 +30,7 @@ filelist(){
     temp="${temp//${1}_index_size_desc/${sanitized}_index_size_desc}"
     temp="${temp//${1}_index_ext_asc/${sanitized}_index_ext_asc}"
     temp="${temp//${1}_index_ext_desc/${sanitized}_index_ext_desc}"
+    temp="${temp//${1}_raw_sizes/${sanitized}_raw_sizes}"
 
     . <(printf '%s' "${temp}")
 }
