@@ -136,32 +136,28 @@ __ARCHIVELIST__._load_full_archive(){
     
     case "$archive_type" in
         tar|tar.gz|tar.bz2|tar.xz)
-            # Batch awk: $3=size, $6+=filename
-            while IFS='|' read -r size name; do
+            # Batch awk: $3=size, $4=date, $5=time, $6+=filename
+            while IFS='|' read -r size mtime name; do
                 [ -z "$name" ] && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$size")
-                __ARCHIVELIST___all_entries+=("$name|$size_str")
-            done < <(tar -tvf "$archive_path" 2>/dev/null | awk '{s=$3; $1=$2=$3=$4=$5=""; sub(/^[ \t]+/, ""); print s "|" $0}')
+                __ARCHIVELIST___all_entries+=("$name|$size_str|$mtime")
+            done < <(tar -tvf "$archive_path" 2>/dev/null | awk '{s=$3; t=$4 " " $5; $1=$2=$3=$4=$5=""; sub(/^[ \t]+/, ""); print s "|" t "|" $0}')
             ;;
         zip)
             # unzip -l output:
             #   Length      Date    Time    Name
             # ---------  ---------- -----   ----
             #        12  2026-04-04 16:44   file.txt
-            while IFS='|' read -r size name; do
+            while IFS='|' read -r size mtime name; do
                 [ -z "$name" ] && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$size")
-                __ARCHIVELIST___all_entries+=("$name|$size_str")
+                __ARCHIVELIST___all_entries+=("$name|$size_str|$mtime")
             done < <(unzip -l "$archive_path" 2>/dev/null | awk '
                 /^-+ +-+ +-+ +-+$/ { if (!in_listing) { in_listing=1; next } else { exit } }
                 in_listing && NF >= 4 {
-                    # Length is $1
-                    s=$1;
-                    # Name starts at column 29 (1-indexed) in unzip -l output
-                    # but it depends on terminal size? No, usually stable.
-                    # Safer: everything from 4th field onwards.
+                    s=$1; t=$2 " " $3;
                     n=$0; for(i=1;i<=3;i++) { sub(/^[ \t]*[^ \t]+[ \t]*/, "", n) }
-                    if (s ~ /^[0-9]+$/) print s "|" n
+                    if (s ~ /^[0-9]+$/) print s "|" t "|" n
                 }
             ')
             ;;
@@ -173,7 +169,7 @@ __ARCHIVELIST__._load_full_archive(){
                 [[ "$_attr" == d* ]] && continue
                 [[ "$_attr" == *D* ]] && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$_size")
-                __ARCHIVELIST___all_entries+=("$_name|$size_str")
+                __ARCHIVELIST___all_entries+=("$_name|$size_str|$_date $_time")
             done < <(unrar l "$archive_path" 2>/dev/null)
             ;;
         7z)
@@ -188,72 +184,55 @@ __ARCHIVELIST__._load_full_archive(){
             
             if [ -n "$cmd" ]; then
                 # Batch 7z: use awk to determine column positions from header separator
-                while IFS='|' read -r attr size name; do
+                while IFS='|' read -r attr size mtime name; do
                     [ -z "$name" ] && continue
                     [ "$attr" = "D" ] && name="${name}/"
                     local size_str=$(__ARCHIVELIST__._format_size "$size")
-                    __ARCHIVELIST___all_entries+=("$name|$size_str")
+                    __ARCHIVELIST___all_entries+=("$name|$size_str|$mtime")
                 done < <($cmd l "$archive_path" 2>/dev/null | awk '
                     /^-{10,}/ {
                         if (!in_listing) {
-                            # First separator: find columns. Filename starts after the last space in dashes.
                             in_listing=1;
-                            # 7z format: Date Time Attr Size Compressed Name
-                            # Separator: ------------------- ----- ------------ ------------ ------------------------
-                            # We can find column starts by matching spaces in separator.
-                            # But its simpler to just use awk fields if they are stable.
-                            # $3=attr, $4=size, $6...=name
                             next
                         } else { exit }
                     }
                     in_listing && NF >= 6 {
-                        # Attr is always $3
-                        # If size is missing (for directories), $4 is Compressed?
-                        # Actually 7z l format is:
-                        # Date      Time    Attr         Size   Compressed  Name
-                        # ------------------- ----- ------------ ------------  ------------------------
-                        a=$3; s=$4;
+                        # 7z format: Date Time Attr Size Compressed Name
+                        a=$3; s=$4; t=$1 " " $2;
                         # Rebuild filename from field 6 onwards
                         for(i=1;i<=5;i++) $i=""; sub(/^[ \t]+/, "");
-                        # Check if directory (D in attr)
                         if (a ~ /D/) a="D"; else a="-";
-                        print a "|" s "|" $0
+                        print a "|" s "|" t "|" $0
                     }
                 ')
             fi
             ;;
         deb)
             # List control scripts under DEBIAN/ prefix
-            while IFS= read -r line; do
-                local size=$(echo "$line" | awk '{print $3}')
-                local filename=$(echo "$line" | awk '{print $6}')
-                filename="${filename#./}"
-                { [ -z "$filename" ] || [ "$filename" = "." ]; } && continue
+            while IFS='|' read -r size mtime name; do
+                filename="DEBIAN/${name#./}"
+                { [ -z "$name" ] || [ "$name" = "." ]; } && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$size")
-                __ARCHIVELIST___all_entries+=("DEBIAN/$filename|$size_str")
-            done < <(dpkg-deb --ctrl-tarfile "$archive_path" 2>/dev/null | tar -tv 2>/dev/null)
+                __ARCHIVELIST___all_entries+=("$filename|$size_str|$mtime")
+            done < <(dpkg-deb --ctrl-tarfile "$archive_path" 2>/dev/null | tar -tv 2>/dev/null | awk '{s=$3; t=$4 " " $5; $1=$2=$3=$4=$5=""; sub(/^[ \t]+/, ""); print s "|" t "|" $0}')
             # List data files
-            while IFS= read -r line; do
-                local size=$(echo "$line" | awk '{print $3}')
-                local filename=$(echo "$line" | awk '{print $6}')
-                filename="${filename#./}"
-                { [ -z "$filename" ] || [ "$filename" = "." ]; } && continue
+            while IFS='|' read -r size mtime name; do
+                filename="${name#./}"
+                { [ -z "$name" ] || [ "$name" = "." ]; } && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$size")
-                __ARCHIVELIST___all_entries+=("$filename|$size_str")
-            done < <(dpkg-deb --fsys-tarfile "$archive_path" 2>/dev/null | tar -tv 2>/dev/null)
+                __ARCHIVELIST___all_entries+=("$filename|$size_str|$mtime")
+            done < <(dpkg-deb --fsys-tarfile "$archive_path" 2>/dev/null | tar -tv 2>/dev/null | awk '{s=$3; t=$4 " " $5; $1=$2=$3=$4=$5=""; sub(/^[ \t]+/, ""); print s "|" t "|" $0}')
             ;;
         rpm)
-            # rpm -qlp lists files; rpm -qp --queryformat gives sizes
             if command -v rpm &>/dev/null; then
-                while IFS= read -r line; do
-                    local size="${line%% *}"
-                    local filename="${line#* }"
-                    # Strip leading /
-                    filename="${filename#/}"
+                while IFS='|' read -r size mtime name; do
+                    filename="${name#/}"
                     [ -z "$filename" ] && continue
                     local size_str=$(__ARCHIVELIST__._format_size "$size")
-                    __ARCHIVELIST___all_entries+=("$filename|$size_str")
-                done < <(rpm -qp --queryformat '[%{FILESIZES} %{FILENAMES}\n]' "$archive_path" 2>/dev/null)
+                    local formatted_time=""
+                    [ -n "$mtime" ] && formatted_time=$(date -d "@$mtime" "+%Y-%m-%d %H:%M" 2>/dev/null)
+                    __ARCHIVELIST___all_entries+=("$filename|$size_str|$formatted_time")
+                done < <(rpm -qp --queryformat '[%{FILESIZES}|%{FILEMTIMES}|%{FILENAMES}\n]' "$archive_path" 2>/dev/null)
             fi
             ;;
         iso)
@@ -265,9 +244,9 @@ __ARCHIVELIST__._load_full_archive(){
                 local _ext_flag
                 _ext_flag=$(__ARCHIVELIST__._iso_ext_flag "$archive_path")
 
-                # Build size map from -l output
+                # Build size/time map from -l output
                 # Format: perms links uid gid size month day year [ lba ] name
-                declare -A _iso_sizes=()
+                declare -A _iso_meta=()
                 local _cur_dir=""
                 while IFS= read -r line; do
                     if [[ "$line" =~ ^"Directory listing of "(.*) ]]; then
@@ -275,11 +254,12 @@ __ARCHIVELIST__._load_full_archive(){
                         continue
                     fi
                     [[ -z "$line" || "$line" =~ ^d ]] && continue
-                    local _size _name
-                    read -r _ _ _ _ _size _ _ _ _ _ _ _name <<< "$line"
+                    local _size _m _d _yt _name
+                    # Skip first 4 fields (perms links uid gid), then get size, month, day, year/time
+                    read -r _ _ _ _ _size _m _d _yt _ _name <<< "$line"
                     [[ "$_size" =~ ^[0-9]+$ ]] || continue
                     [ -z "$_name" ] && continue
-                    _iso_sizes["${_cur_dir}/${_name}"]="$_size"
+                    _iso_meta["${_cur_dir}/${_name}"]="$_size|$_m $_d $_yt"
                 done < <(isoinfo $_ext_flag -l -i "$archive_path" 2>/dev/null)
 
                 # Build set of known directories from -l output (lines starting with d)
@@ -305,10 +285,14 @@ __ARCHIVELIST__._load_full_archive(){
                     [ -z "$clean" ] && continue
                     # Skip if this path is a known directory
                     [ "${_iso_dirs[$clean]}" = "1" ] && continue
-                    local size="${_iso_sizes[$filepath]:-0}"
-                    local size_str=$(__ARCHIVELIST__._format_size "$size")
-                    __ARCHIVELIST___all_entries+=("$clean|$size_str")
+
+                    local meta="${_iso_meta[$filepath]}"
+                    local size="${meta%%|*}"
+                    local mtime="${meta#*|}"
+                    local size_str=$(__ARCHIVELIST__._format_size "${size:-0}")
+                    __ARCHIVELIST___all_entries+=("$clean|$size_str|$mtime")
                 done < <(isoinfo $_ext_flag -f -i "$archive_path" 2>/dev/null)
+
             fi
             ;;
     esac
@@ -325,7 +309,7 @@ __ARCHIVELIST__._filter_by_path(){
     local -A added_subdirs=()
     
     for entry in "${__ARCHIVELIST___all_entries[@]}"; do
-        IFS='|' read -r entry_name entry_size <<< "$entry"
+        IFS='|' read -r entry_name entry_size entry_time <<< "$entry"
         
         [[ "$entry_name" != "$current_prefix"* ]] && continue
         
@@ -336,31 +320,42 @@ __ARCHIVELIST__._filter_by_path(){
             local subdir="${relative%%/*}"
             
             if [ -z "${added_subdirs[$subdir]+x}" ]; then
-                subdirs+=("$subdir")
-                added_subdirs["$subdir"]="1"
+                # For subdirectories, try to use the time from the entry if it matches exactly
+                # (explicit directory entry)
+                local subdir_time=""
+                if [ "$relative" = "${subdir}/" ]; then
+                    subdir_time="$entry_time"
+                fi
+                subdirs+=("$subdir|$subdir_time")
+                added_subdirs["$subdir"]="${#subdirs[@]}" # store 1-based index
+            elif [ "$relative" = "${subdir}/" ]; then
+                # If we found an explicit directory entry later, update the time
+                local idx=$((added_subdirs[$subdir] - 1))
+                subdirs[$idx]="$subdir|$entry_time"
             fi
         else
-            files+=("$relative|$entry_name|$entry_size")
+            files+=("$relative|$entry_name|$entry_size|$entry_time")
         fi
     done
     
     # Add subdirectories
-    for dir in "${subdirs[@]}"; do
+    for dir_entry in "${subdirs[@]}"; do
+        IFS='|' read -r dir dtime <<< "$dir_entry"
         __ARCHIVELIST___files+=("$dir")
         __ARCHIVELIST___types+=("d")
         __ARCHIVELIST___sizes+=("SUB-DIR")
-        __ARCHIVELIST___times+=("")
+        __ARCHIVELIST___times+=("$dtime")
         __ARCHIVELIST___full_paths+=("${current_prefix}${dir}")
         __ARCHIVELIST___marked+=("0")
     done
     
     # Add files
     for file_entry in "${files[@]}"; do
-        IFS='|' read -r filename fullpath filesize <<< "$file_entry"
+        IFS='|' read -r filename fullpath filesize ftime <<< "$file_entry"
         __ARCHIVELIST___files+=("$filename")
         __ARCHIVELIST___types+=("f")
         __ARCHIVELIST___sizes+=("$filesize")
-        __ARCHIVELIST___times+=("")
+        __ARCHIVELIST___times+=("$ftime")
         __ARCHIVELIST___full_paths+=("$fullpath")
         __ARCHIVELIST___marked+=("0")
     done
