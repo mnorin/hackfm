@@ -18,6 +18,7 @@ _PC_BOLD=$(tui.style.bold)
 _PC_REGULAR=$(tui.style.regular)
 _PC_RESET=$(tui.style.reset)
 _PC_BORDER="${_PC_BG_BLUE}${_PC_WHITE}"
+_PC_SPACES="                                                                                                                                                                                                        "
 
 declare -Ag __PANEL___properties=()
 
@@ -136,7 +137,7 @@ __PANEL__.render_row_string(){
     local list=$(__PANEL__.list_source)
     local selected=$($list.selected)
 
-    # Get item data from list (now includes link_target)
+    # Get item data from list
     local filename item_type item_size item_time is_exec is_marked link_target
     IFS='|' read -r filename item_type item_size item_time is_exec is_marked link_target <<< "$($list.get $file_idx)"
 
@@ -167,7 +168,7 @@ __PANEL__.render_row_string(){
     local padding_needed=$((max_filename_len - ${#display_name}))
     local padding=""
     if [ $padding_needed -gt 0 ]; then
-        padding=$(printf '%*s' "$padding_needed" "")
+        padding="${_PC_SPACES:0:padding_needed}"
     fi
 
     # Determine highlight state
@@ -227,7 +228,14 @@ __PANEL__.render_row_string(){
         row+="$_PC_WHITE"
     fi
     local display_time="${item_time:0:$time_col_width}"
-    row+="$(printf "%${size_col_width}s" "$item_size")"
+    
+    # Manual padding for size (right-aligned)
+    local s_pad_needed=$((size_col_width - ${#item_size}))
+    local s_pad=""
+    if [ $s_pad_needed -gt 0 ]; then
+        s_pad="${_PC_SPACES:0:s_pad_needed}"
+    fi
+    row+="${s_pad}${item_size}"
 
     # Second separator
     if [ $is_cursor -eq 1 ]; then
@@ -249,7 +257,13 @@ __PANEL__.render_row_string(){
     else
         row+="$_PC_WHITE"
     fi
-    row+="$(printf "%-${time_col_width}s" "$display_time")"
+    # Manual padding for time (left-aligned)
+    local t_pad_needed=$((time_col_width - ${#display_time}))
+    local t_pad=""
+    if [ $t_pad_needed -gt 0 ]; then
+        t_pad="${_PC_SPACES:0:t_pad_needed}"
+    fi
+    row+="${display_time}${t_pad}"
     row+="$_PC_RESET"
 
     echo "$row"
@@ -784,8 +798,8 @@ __PANEL__._do_search(){
     
     # Search from beginning (index 0) to find first match
     for ((i=0; i<file_count; i++)); do
-        local fname ftype fsize ftime fexec fsel
-        IFS='|' read -r fname ftype fsize ftime fexec fsel <<< "$($list.get $i)"
+        local entry=$($list.get $i)
+        local fname="${entry%%|*}"
         
         # Case-insensitive prefix match
         if [[ "${fname,,}" == "${search_text,,}"* ]]; then

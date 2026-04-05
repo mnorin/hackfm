@@ -136,58 +136,40 @@ __ARCHIVELIST__._load_full_archive(){
     
     case "$archive_type" in
         tar|tar.gz|tar.bz2|tar.xz)
-            while IFS= read -r line; do
-                local size=$(echo "$line" | awk '{print $3}')
-                local filename=$(echo "$line" | awk '{$1=$2=$3=$4=$5=""; sub(/^[ \t]+/, ""); print}')
+            # Batch awk: $3=size, $6+=filename
+            while IFS='|' read -r size name; do
+                [ -z "$name" ] && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$size")
-                __ARCHIVELIST___all_entries+=("$filename|$size_str")
-            done < <(tar -tvf "$archive_path" 2>/dev/null)
+                __ARCHIVELIST___all_entries+=("$name|$size_str")
+            done < <(tar -tvf "$archive_path" 2>/dev/null | awk '{s=$3; $1=$2=$3=$4=$5=""; sub(/^[ \t]+/, ""); print s "|" $0}')
             ;;
         zip)
-            # ZIP files may have extra info/text before the file list
-            # Look for separator line (dashes) to find the start of file listing
-            local in_listing=0
-            while IFS= read -r line; do
-                # Find separator line with dashes
-                if [[ "$line" =~ ^-{5,} ]]; then
-                    if [ $in_listing -eq 0 ]; then
-                        # First separator - file listing starts after this
-                        in_listing=1
-                        continue
-                    else
-                        # Second separator - end of listing
-                        break
-                    fi
-                fi
-                
-                # Skip until we're in the listing
-                [ $in_listing -eq 0 ] && continue
-                
-                # Skip lines with less than 4 fields
-                local field_count=$(echo "$line" | awk '{print NF}')
-                [ "$field_count" -lt 4 ] && continue
-                
-                local size=$(echo "$line" | awk '{print $1}')
-                local filename=$(echo "$line" | awk '{$1=$2=$3=""; sub(/^[ \t]+/, ""); print}')
-                
-                # Skip if size is not numeric
-                [[ ! "$size" =~ ^[0-9]+$ ]] && continue
-                
+            # unzip -l output:
+            #   Length      Date    Time    Name
+            # ---------  ---------- -----   ----
+            #        12  2026-04-04 16:44   file.txt
+            while IFS='|' read -r size name; do
+                [ -z "$name" ] && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$size")
-                [ -n "$filename" ] && __ARCHIVELIST___all_entries+=("$filename|$size_str")
-            done < <(unzip -l "$archive_path" 2>/dev/null)
+                __ARCHIVELIST___all_entries+=("$name|$size_str")
+            done < <(unzip -l "$archive_path" 2>/dev/null | awk '
+                /^-+ +-+ +-+ +-+$/ { if (!in_listing) { in_listing=1; next } else { exit } }
+                in_listing && NF >= 4 {
+                    # Length is $1
+                    s=$1;
+                    # Name starts at column 29 (1-indexed) in unzip -l output
+                    # but it depends on terminal size? No, usually stable.
+                    # Safer: everything from 4th field onwards.
+                    n=$0; for(i=1;i<=3;i++) { sub(/^[ \t]*[^ \t]+[ \t]*/, "", n) }
+                    if (s ~ /^[0-9]+$/) print s "|" n
+                }
+            ')
             ;;
         rar)
-            # unrar l output: attr size date time name
-            # Unix attrs: first char 'd' = directory
-            # DOS attrs:  'D' anywhere in attr field = directory
-            while IFS= read -r line; do
-                local _attr _size _date _time _name
-                read -r _attr _size _date _time _name <<< "$line"
-                # Must have a valid numeric size and a name
+            # unrar l: attr size date time name. Batch read into variables.
+            while read -r _attr _size _date _time _name; do
                 [[ "$_size" =~ ^[0-9]+$ ]] || continue
                 [ -z "$_name" ] && continue
-                # Skip directories
                 [[ "$_attr" == d* ]] && continue
                 [[ "$_attr" == *D* ]] && continue
                 local size_str=$(__ARCHIVELIST__._format_size "$_size")
@@ -204,69 +186,40 @@ __ARCHIVELIST__._load_full_archive(){
                 cmd="7zr"
             fi
             
-            
             if [ -n "$cmd" ]; then
-                local separator_line=""
-                local filename_pos=0
-                local in_listing=0
-                local line_count=0
-                
-                while IFS= read -r line; do
-                    line_count=$(( line_count + 1 ))
-                    
-                    # Find separator line with dashes
-                    if [[ "$line" =~ ^-{10,} ]]; then
-                        if [ $in_listing -eq 0 ]; then
-                            # First separator - save it to find filename position
-                            separator_line="$line"
-                            # Find where last dash section starts
-                            local temp="${separator_line% -*}"
-                            filename_pos=${#temp}
-                            filename_pos=$(( filename_pos + 1 ))
-                            in_listing=1
-                            continue
-                        else
-                            # Second separator - end of listing
-                            break
-                        fi
-                    fi
-                    
-                    # Skip until we're in the listing
-                    if [ $in_listing -eq 0 ]; then
-                        continue
-                    fi
-                    
-                    # Skip empty lines (can appear between separator and files)
-                    if [[ -z "$line" ]]; then
-                        continue
-                    fi
-                    
-                    # Extract filename by position
-                    local filename="${line:$filename_pos}"
-                    
-                    # Extract size (column 4) and attributes (column 3)
-                    local attr=$(echo "$line" | awk '{print $3}')
-                    local size=$(echo "$line" | awk '{print $4}')
-                    
-                    
-                    [[ -z "$filename" ]] && continue
-                    
-                    # Check if it's a directory (D in attribute column)
-                    local is_dir=0
-                    if [[ "$attr" == D* ]]; then
-                        is_dir=1
-                    fi
-                    
-                    # For directories, append / to the filename
-                    if [ $is_dir -eq 1 ]; then
-                        filename="${filename}/"
-                    fi
-                    
+                # Batch 7z: use awk to determine column positions from header separator
+                while IFS='|' read -r attr size name; do
+                    [ -z "$name" ] && continue
+                    [ "$attr" = "D" ] && name="${name}/"
                     local size_str=$(__ARCHIVELIST__._format_size "$size")
-                    __ARCHIVELIST___all_entries+=("$filename|$size_str")
-                    
-                done < <($cmd l "$archive_path" 2>/dev/null)
-                
+                    __ARCHIVELIST___all_entries+=("$name|$size_str")
+                done < <($cmd l "$archive_path" 2>/dev/null | awk '
+                    /^-{10,}/ {
+                        if (!in_listing) {
+                            # First separator: find columns. Filename starts after the last space in dashes.
+                            in_listing=1;
+                            # 7z format: Date Time Attr Size Compressed Name
+                            # Separator: ------------------- ----- ------------ ------------ ------------------------
+                            # We can find column starts by matching spaces in separator.
+                            # But its simpler to just use awk fields if they are stable.
+                            # $3=attr, $4=size, $6...=name
+                            next
+                        } else { exit }
+                    }
+                    in_listing && NF >= 6 {
+                        # Attr is always $3
+                        # If size is missing (for directories), $4 is Compressed?
+                        # Actually 7z l format is:
+                        # Date      Time    Attr         Size   Compressed  Name
+                        # ------------------- ----- ------------ ------------  ------------------------
+                        a=$3; s=$4;
+                        # Rebuild filename from field 6 onwards
+                        for(i=1;i<=5;i++) $i=""; sub(/^[ \t]+/, "");
+                        # Check if directory (D in attr)
+                        if (a ~ /D/) a="D"; else a="-";
+                        print a "|" s "|" $0
+                    }
+                ')
             fi
             ;;
         deb)
@@ -369,6 +322,7 @@ __ARCHIVELIST__._filter_by_path(){
     
     local -a subdirs=()
     local -a files=()
+    local -A added_subdirs=()
     
     for entry in "${__ARCHIVELIST___all_entries[@]}"; do
         IFS='|' read -r entry_name entry_size <<< "$entry"
@@ -381,15 +335,10 @@ __ARCHIVELIST__._filter_by_path(){
         if [[ "$relative" == */* ]]; then
             local subdir="${relative%%/*}"
             
-            local already_added=0
-            for d in "${subdirs[@]}"; do
-                if [ "$d" = "$subdir" ]; then
-                    already_added=1
-                    break
-                fi
-            done
-            
-            [ $already_added -eq 0 ] && subdirs+=("$subdir")
+            if [ -z "${added_subdirs[$subdir]+x}" ]; then
+                subdirs+=("$subdir")
+                added_subdirs["$subdir"]="1"
+            fi
         else
             files+=("$relative|$entry_name|$entry_size")
         fi
