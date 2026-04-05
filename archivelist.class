@@ -263,20 +263,47 @@ __ARCHIVELIST__._load_full_archive(){
                 # Build size/time map from -l output
                 # Format: perms links uid gid size month day year [ lba ] name
                 declare -A _iso_meta=()
-                local _cur_dir=""
-                while IFS= read -r line; do
-                    if [[ "$line" =~ ^"Directory listing of "(.*) ]]; then
-                        _cur_dir="${BASH_REMATCH[1]%/}"
-                        continue
-                    fi
-                    [[ -z "$line" || "$line" =~ ^d ]] && continue
-                    local _size _m _d _yt _name
-                    # Skip first 4 fields (perms links uid gid), then get size, month, day, year/time
-                    read -r _ _ _ _ _size _m _d _yt _ _name <<< "$line"
-                    [[ "$_size" =~ ^[0-9]+$ ]] || continue
-                    [ -z "$_name" ] && continue
-                    _iso_meta["${_cur_dir}/${_name}"]="$_size|$_m $_d $_yt"
-                done < <(isoinfo $_ext_flag -l -i "$archive_path" 2>/dev/null)
+                while IFS='|' read -r filepath size mtime; do
+                    [ -z "$filepath" ] && continue
+                    _iso_meta["$filepath"]="$size|$mtime"
+                done < <(isoinfo $_ext_flag -l -i "$archive_path" 2>/dev/null | awk '
+                    BEGIN {
+                        split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", months, " ");
+                        for (i=1; i<=12; i++) m_num[months[i]] = sprintf("%02d", i);
+                    }
+                    /^Directory listing of / { 
+                        dir = substr($0, 22); 
+                        sub(/\/$/, "", dir);
+                        next 
+                    }
+                    /^[drwxt-]+ / {
+                        if ($1 ~ /^d/) next;
+                        # isoinfo -l fields: perms links uid gid size month day year/time [ lba ] name
+                        s = $5; m_name = $6; d_raw = $7; yt = $8;
+                        
+                        m = m_num[m_name];
+                        if (m == "") m = "01"; # fallback
+                        
+                        d = sprintf("%02d", d_raw);
+                        # If yt has ":", it is time (current year assumed), else it is year
+                        if (yt ~ /:/) { t = yt; y = "2026"; }
+                        else { t = "00:00"; y = yt; }
+                        
+                        mtime = y "-" m "-" d " " t;
+
+                        # Extract name
+                        n = $0; 
+                        if (sub(/^.*\] +/, "", n) == 0) {
+                            n = $NF;
+                        }
+                        sub(/[ \t]+$/, "", n);
+                        if (n == "." || n == "..") next;
+                        full = dir "/" n;
+                        if (full !~ /^\//) full = "/" full;
+                        gsub(/\/+/, "/", full);
+                        print full "|" s "|" mtime
+                    }
+                ')
 
                 # Build set of known directories from -l output (lines starting with d)
                 declare -A _iso_dirs=()
@@ -302,7 +329,12 @@ __ARCHIVELIST__._load_full_archive(){
                     # Skip if this path is a known directory
                     [ "${_iso_dirs[$clean]}" = "1" ] && continue
 
+                    # Match against _iso_meta using multiple path variants for robustness
                     local meta="${_iso_meta[$filepath]}"
+                    [ -z "$meta" ] && meta="${_iso_meta[/$filepath]}"
+                    [ -z "$meta" ] && meta="${_iso_meta[/$clean]}"
+                    [ -z "$meta" ] && meta="${_iso_meta[$clean]}"
+
                     local size="${meta%%|*}"
                     local mtime="${meta#*|}"
                     local size_str=$(__ARCHIVELIST__._format_size "${size:-0}")
