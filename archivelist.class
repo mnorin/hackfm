@@ -162,15 +162,22 @@ __ARCHIVELIST__._load_full_archive(){
             ')
             ;;
         rar)
-            # unrar l: attr size date time name. Batch read into variables.
-            while read -r _attr _size _date _time _name; do
-                [[ "$_size" =~ ^[0-9]+$ ]] || continue
-                [ -z "$_name" ] && continue
-                [[ "$_attr" == d* ]] && continue
-                [[ "$_attr" == *D* ]] && continue
-                local size_str=$(__ARCHIVELIST__._format_size "$_size")
-                __ARCHIVELIST___all_entries+=("$_name|$size_str|$_date $_time")
-            done < <(unrar l "$archive_path" 2>/dev/null)
+            # unrar l: attr size date time name
+            while IFS='|' read -r attr size mtime name; do
+                [ -z "$name" ] && continue
+                [[ "$attr" == d* ]] && continue
+                [[ "$attr" == *D* ]] && continue
+                local size_str=$(__ARCHIVELIST__._format_size "$size")
+                __ARCHIVELIST___all_entries+=("$name|$size_str|$mtime")
+            done < <(unrar l "$archive_path" 2>/dev/null | awk '
+                /^-+ +-+$/ || /^-+ +-+  -+ +-+  ----+$/ { if (!in_listing) { in_listing=1; next } else { exit } }
+                in_listing {
+                    a=$1; s=$2; t=$3 " " $4;
+                    # Name is everything from 5th field onwards
+                    for(i=1;i<=4;i++) $i=""; sub(/^[ \t]+/, "");
+                    print a "|" s "|" t "|" $0
+                }
+            ')
             ;;
         7z)
             local cmd=""
@@ -193,16 +200,25 @@ __ARCHIVELIST__._load_full_archive(){
                     /^-{10,}/ {
                         if (!in_listing) {
                             in_listing=1;
+                            # Find Name column start position from separator line
+                            # Separator looks like: ------------------- ----- ------------ ------------  ------------------------
+                            # Name is the last section.
+                            n_pos = index($0, "  ---"); 
+                            if (n_pos == 0) n_pos = 54; else n_pos += 2;
                             next
                         } else { exit }
                     }
-                    in_listing && NF >= 6 {
-                        # 7z format: Date Time Attr Size Compressed Name
-                        a=$3; s=$4; t=$1 " " $2;
-                        # Rebuild filename from field 6 onwards
-                        for(i=1;i<=5;i++) $i=""; sub(/^[ \t]+/, "");
+                    in_listing {
+                        # Date Time: cols 0-19, Attr: 20-25, Size: 26-38, Compressed: 39-51, Name: 53+
+                        # We use substr for stability
+                        t = substr($0, 1, 19);
+                        a = substr($0, 21, 5);
+                        s = substr($0, 27, 12);
+                        n = substr($0, n_pos);
+                        sub(/[ \t]+$/, "", n); # trim trailing spaces
+                        gsub(/[ \t]+/, "", s); # trim spaces from size
                         if (a ~ /D/) a="D"; else a="-";
-                        print a "|" s "|" t "|" $0
+                        if (n != "") print a "|" s "|" t "|" n
                     }
                 ')
             fi
