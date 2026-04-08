@@ -27,6 +27,11 @@ __VIEWER__.cols(){         __VIEWER__.property cols         "$@"; }
 # File lines array (windowed buffer)
 declare -ag __VIEWER___lines=()
 
+_V_BG_BLUE=$(tui.color.bg_blue)
+_V_WHITE=$(tui.color.white)
+_V_RESET=$(tui.style.reset)
+_V_SPACES="                                                                                                                                                                                                        "
+
 # Window constants
 VIEWER_WINDOW_SIZE=1000       # max lines kept in buffer
 VIEWER_LOAD_THRESHOLD=200     # load more when within this many lines of buffer edge
@@ -40,6 +45,7 @@ __VIEWER__._append_chunks(){
     local line="$1"
     local cols="$2"
     local len=${#line}
+
     if [ "$len" -eq 0 ]; then
         __VIEWER___lines+=("")
     else
@@ -66,16 +72,19 @@ __VIEWER__.load(){
     __VIEWER__.use_window = 0
 
     local total
-    total=$(awk 'END{print NR}' "$filepath" 2>/dev/null || echo "0")
+    # Use wc -l for fast line counting
+    total=$(wc -l < "$filepath" 2>/dev/null || echo "0")
     __VIEWER__.file_total = "$total"
 
     local cols=$(__VIEWER__.cols)
 
     if [ "$total" -le "$VIEWER_WINDOW_SIZE" ]; then
-        while IFS= read -r line; do
-            line="${line%$'\r'}"
+        # Use mapfile for fast batch reading and a single pipe for sanitization
+        local -a raw_lines=()
+        mapfile -t raw_lines < <(tr '\000-\010\013-\037\177' '.' < "$filepath" | sed 's/\x1b/^[ /g' | expand -t 8)
+        for line in "${raw_lines[@]}"; do
             __VIEWER__._append_chunks "$line" "$cols"
-        done < <(tr '\000-\010\013-\037\177' '.' < "$filepath")
+        done
     else
         __VIEWER__.use_window = 1
         __VIEWER__._load_window 0
@@ -98,14 +107,14 @@ __VIEWER__._load_window(){
     __VIEWER__.file_offset = "$from_line"
 
     local cols=$(__VIEWER__.cols)
-    local count=0
-
-    while IFS= read -r line; do
-        line="${line%$'\r'}"
+    
+    local -a raw_lines=()
+    # High-performance pipe for jumping to offset, sanitizing and expanding tabs
+    mapfile -t -n "$VIEWER_WINDOW_SIZE" raw_lines < <(tail -n +"$((from_line + 1))" "$filepath" 2>/dev/null | tr '\000-\010\013-\037\177' '.' | sed 's/\x1b/^[ /g' | expand -t 8)
+    
+    for line in "${raw_lines[@]}"; do
         __VIEWER__._append_chunks "$line" "$cols"
-        count=$(( count + 1 ))
-        [ $count -ge $VIEWER_WINDOW_SIZE ] && break
-    done < <(tail -n +"$((from_line + 1))" "$filepath" 2>/dev/null | tr '\000-\010\013-\037\177' '.')
+    done
 }
 
 # ============================================================================
@@ -114,39 +123,43 @@ __VIEWER__._load_window(){
 
 __VIEWER__.display_content(){
     local row=2
-    local file_offset=$(__VIEWER__.file_offset)
+    local scroll=$(__VIEWER__.scroll)
+    local rows=$(__VIEWER__.rows)
+    local cols=$(__VIEWER__.cols)
+    local max_rows=$(( rows - 2 ))
+    local arr_size=${#__VIEWER___lines[@]}
 
-    # Set blue background once for the entire content area
-    tui.color.bg_blue
-    tui.color.white
-    tui.cursor.move 2 1
+    # Set initial colors
+    printf '%b%b' "$_V_BG_BLUE" "$_V_WHITE"
 
-    for ((i=scroll; i<scroll+max_rows && i<total_lines; i++)); do
-        local arr_idx=$(( i - file_offset ))
+    # Important: The loop must use the array size (chunks) as the limit, 
+    # not the file line count, to avoid unit mismatch when lines wrap.
+    for ((i=0; i<max_rows; i++)); do
+        local arr_idx=$(( scroll + i ))
         tui.cursor.move $row 1
 
-        local display_line="${__VIEWER___lines[$arr_idx]}"
-        display_line="${display_line//$'\t'/        }"
-        local display_len=$(printf '%s' "$display_line" | wc -m)
-        if [ "$display_len" -gt "$cols" ]; then
-            display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
-            display_line+="..."
+        if [ $arr_idx -lt $arr_size ]; then
+            local display_line="${__VIEWER___lines[$arr_idx]}"
+            
+            # Ensure background color covers full width even if terminal wraps
+            # printf %-*s pads with spaces using the current background color.
+            printf '%b%-*.*s\033[K' "$_V_BG_BLUE" "$cols" "$cols" "$display_line"
+        else
+            # Fill empty space at end of buffer
+            printf '%b%*s\033[K' "$_V_BG_BLUE" "$cols" ""
         fi
-
-        printf '%s' "$display_line"
-        printf '\033[K'
         row=$(( row + 1 ))
     done
 
-    # Fill remaining rows with blue (never past fkey bar)
+    # Fill remaining rows if terminal is larger than viewport
     local content_end=$(( rows - 1 ))
     while [ $row -le $content_end ]; do
         tui.cursor.move $row 1
-        printf '\033[K'
+        printf '%b\033[K' "$_V_BG_BLUE"
         row=$(( row + 1 ))
     done
 
-    tui.style.reset
+    printf '%b' "$_V_RESET"
 }
 
 # Check if we need to slide the window and do so
@@ -516,7 +529,16 @@ __VIEWER__.show(){
     __FKEYBAR_LABELS=("Help" "" "Quit" "" "" "" "Search" "" "" "Quit")
     __VIEWER___fkeybar.render
 
+    # For navigation, we must use the actual number of display chunks currently in memory
+    local total_display_lines=${#__VIEWER___lines[@]}
+    # In windowed mode, we use file_total as an estimate for max scrolling, 
+    # but actual navigation bounds are governed by the loaded chunks.
+    if [ "$use_window" = "1" ]; then
+        total_display_lines=$(__VIEWER__.file_total)
+    fi
+
     # Disable line wrap and lock scroll region to content area only.
+
     # This means no stray output or implicit terminal scroll can ever touch
     # the fkey bar at row $rows \u2014 it is physically outside the scroll region.
     tui.screen.wrap_off
@@ -537,7 +559,8 @@ __VIEWER__.show(){
     # Draw title before initial content display
     local current_line=$((scroll + 1))
     local pct=0
-    [ "$total_lines" -gt 0 ] && pct=$(( scroll * 100 / total_lines ))
+    [ "$total_display_lines" -gt 0 ] && pct=$(( scroll * 100 / total_display_lines ))
+
     __VIEWER___title.text_left = " File: $filename"
     __VIEWER___title.text_right = "Line $current_line (~$pct%) "
     __VIEWER___title.render
@@ -615,7 +638,7 @@ __VIEWER__.show(){
                 [ $scroll -gt 0 ] && scroll=$(( scroll - 1 ))
                 ;;
             DOWN)
-                [ $scroll -lt $((total_lines - max_rows)) ] && scroll=$(( scroll + 1 )) || true
+                [ $scroll -lt $((total_display_lines - max_rows)) ] && scroll=$(( scroll + 1 )) || true
                 ;;
             PAGEUP)
                 scroll=$((scroll - max_rows))
@@ -623,7 +646,7 @@ __VIEWER__.show(){
                 ;;
             PAGEDOWN)
                 scroll=$((scroll + max_rows))
-                local max_scroll=$((total_lines - max_rows))
+                local max_scroll=$((total_display_lines - max_rows))
                 [ $max_scroll -lt 0 ] && max_scroll=0
                 [ $scroll -gt $max_scroll ] && scroll=$max_scroll
                 ;;
@@ -631,9 +654,10 @@ __VIEWER__.show(){
                 scroll=0
                 ;;
             END)
-                scroll=$((total_lines - max_rows))
+                scroll=$((total_display_lines - max_rows))
                 [ $scroll -lt 0 ] && scroll=0
                 ;;
+
         esac
 
         # Check if window needs sliding (no-op for fully loaded files)
@@ -642,51 +666,39 @@ __VIEWER__.show(){
         # Refresh locals that may have changed after window slide
         file_offset=$(__VIEWER__.file_offset)
         local window_slid=0
-        [ "$file_offset" != "$old_offset" ] && window_slid=1
+        if [ "$file_offset" != "$old_offset" ]; then
+            window_slid=1
+            total_display_lines=${#__VIEWER___lines[@]}
+            # Adjust scroll if window offset changed so the view stays stable
+            scroll=$(( scroll + old_offset - file_offset ))
+        fi
+
+        # Sync local scroll back to the object property so other methods see it
+        __VIEWER__.scroll = $scroll
 
         local scroll_delta=$((scroll - old_scroll))
 
         if [ $window_slid -eq 1 ] || [ $scroll_delta -ne 0 ]; then
             if [ $window_slid -eq 0 ] && [ $scroll_delta -eq 1 ]; then
                 # Scrolled down by 1 - scroll region up, draw new bottom line
-                tui.color.bg_blue
-                tui.color.white
-                tui.cursor.move $((rows - 1)) 1
-                tui.region.scroll_up
                 local new_line_idx=$((scroll + max_rows - 1))
-                if [ $new_line_idx -lt $total_lines ]; then
-                    local arr_idx=$(( new_line_idx - file_offset ))
+                if [ $new_line_idx -lt $total_display_lines ]; then
                     tui.cursor.move $((rows - 1)) 1
-                    local display_line="${__VIEWER___lines[$arr_idx]}"
-                    display_line="${display_line//$'\t'/        }"
-                    local display_len=$(printf '%s' "$display_line" | wc -m)
-                    if [ "$display_len" -gt "$cols" ]; then
-                        display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
-                        display_line+="..."
-                    fi
-                    printf '%s' "$display_line"
-                    printf '\033[K'
+                    tui.region.scroll_up
+                    tui.cursor.move $((rows - 1)) 1
+                    local display_line="${__VIEWER___lines[$new_line_idx]}"
+                    printf '%b%-*.*s\033[K' "$_V_BG_BLUE" "$cols" "$cols" "$display_line"
                 fi
-                tui.style.reset
 
             elif [ $window_slid -eq 0 ] && [ $scroll_delta -eq -1 ]; then
                 # Scrolled up by 1 - scroll region down, draw new top line
-                tui.color.bg_blue
-                tui.color.white
-                tui.cursor.move 2 1
-                tui.region.scroll_down
-                local arr_idx=$(( scroll - file_offset ))
-                tui.cursor.move 2 1
-                local display_line="${__VIEWER___lines[$arr_idx]}"
-                display_line="${display_line//$'\t'/        }"
-                local display_len=$(printf '%s' "$display_line" | wc -m)
-                if [ "$display_len" -gt "$cols" ]; then
-                    display_line=$(printf '%s' "$display_line" | cut -c1-$((cols - 3)))
-                    display_line+="..."
+                if [ $scroll -lt $total_display_lines ]; then
+                    tui.cursor.move 2 1
+                    tui.region.scroll_down
+                    tui.cursor.move 2 1
+                    local display_line="${__VIEWER___lines[$scroll]}"
+                    printf '%b%-*.*s\033[K' "$_V_BG_BLUE" "$cols" "$cols" "$display_line"
                 fi
-                printf '%s' "$display_line"
-                printf '\033[K'
-                tui.style.reset
 
             else
                 # Page jump or window slide - full redraw
